@@ -55,6 +55,36 @@ int DW3000Class::config[] = {
     PHR_RATE_850KB       // PHR Rate
 };
 
+static uint8_t buildSpiHeader(uint32_t base, uint32_t sub, bool write, uint8_t* header) {
+    uint8_t headerLen = 0;
+    uint8_t first = (uint8_t)(((base & 0x1F) << 1) & 0x7E);
+
+    if (write) {
+        first |= 0x80;
+    }
+
+    if (sub > 0) {
+        first |= 0x40;
+    }
+
+    header[headerLen++] = first;
+
+    if (sub > 0) {
+        uint16_t subAddr = (uint16_t)sub;
+        uint8_t second = (uint8_t)((subAddr & 0x7F) << 2);
+        if (subAddr > 0x7F) {
+            second |= 0x02;  // Enable extended addressing
+            header[headerLen++] = second;
+            header[headerLen++] = (uint8_t)((subAddr >> 7) & 0xFF);
+        }
+        else {
+            header[headerLen++] = second;
+        }
+    }
+
+    return headerLen;
+}
+
 
 
 /*
@@ -1292,33 +1322,17 @@ void DW3000Class::writeFastCommand(int cmd) {
  @return Returns 0 or the result of the read operation
 */
 uint32_t DW3000Class::readOrWriteFullAddress(uint32_t base, uint32_t sub, uint32_t data, uint32_t dataLen, uint32_t readWriteBit) {
-    uint32_t header = 0x00;
-
-    if (readWriteBit) header = header | 0x80;
-
-    header = header | ((base & 0x1F) << 1);
-
-    if (sub > 0) {
-        header = header | 0x40;
-        header = header << 8;
-        header = header | ((sub & 0x7F) << 2);
-    }
-
-    uint32_t header_size = header > 0xFF ? 2 : 1;
+    uint8_t header[3];
+    uint8_t headerLen = buildSpiHeader(base, sub, readWriteBit != 0, header);
     uint32_t res = 0;
 
     if (!readWriteBit) {
-        int headerArr[header_size];
-
-        if (header_size == 1) {
-            headerArr[0] = header;
-        }
-        else {
-            headerArr[0] = (header & 0xFF00) >> 8;
-            headerArr[1] = header & 0xFF;
+        int headerArr[3];
+        for (uint8_t i = 0; i < headerLen; i++) {
+            headerArr[i] = header[i];
         }
 
-        res = (uint32_t)sendBytes(headerArr, header_size, 4);
+        res = (uint32_t)sendBytes(headerArr, headerLen, 4);
         return res;
     }
     else {
@@ -1338,23 +1352,38 @@ uint32_t DW3000Class::readOrWriteFullAddress(uint32_t base, uint32_t sub, uint32
         else {
             payload_bytes = dataLen;
         }
-        int payload[header_size + payload_bytes];
+        int payload[3 + payload_bytes];
 
-        if (header_size == 1) {
-            payload[0] = header;
-        }
-        else {
-            payload[0] = (header & 0xFF00) >> 8;
-            payload[1] = header & 0xFF;
+        for (uint8_t i = 0; i < headerLen; i++) {
+            payload[i] = header[i];
         }
 
-        for (int i = 0; i < payload_bytes; i++) {
-            payload[header_size + i] = (data >> i * 8) & 0xFF;
+        for (uint32_t i = 0; i < payload_bytes; i++) {
+            payload[headerLen + i] = (data >> (i * 8)) & 0xFF;
         }
 
-        res = (uint32_t)sendBytes(payload, 2 + payload_bytes, 0);  // "2 +" because the first 2 bytes are the header part
+        res = (uint32_t)sendBytes(payload, headerLen + payload_bytes, 0);
         return res;
     }
+}
+
+void DW3000Class::readBytes(int base, int sub, uint8_t* buffer, size_t length) {
+    if (buffer == nullptr || length == 0) {
+        return;
+    }
+
+    uint8_t header[3];
+    uint8_t headerLen = buildSpiHeader((uint32_t)base, (uint32_t)sub, false, header);
+
+    digitalWrite(CHIP_SELECT_PIN, LOW);
+    for (uint8_t i = 0; i < headerLen; i++) {
+        SPI.transfer(header[i]);
+    }
+
+    for (size_t i = 0; i < length; i++) {
+        buffer[i] = SPI.transfer(0x00);
+    }
+    digitalWrite(CHIP_SELECT_PIN, HIGH);
 }
 
 /*
