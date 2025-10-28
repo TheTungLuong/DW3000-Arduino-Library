@@ -82,9 +82,10 @@ class DW3000Class {
 		static uint32_t write(int base, int sub, uint32_t data, int data_len);
 		static uint32_t write(int base, int sub, uint32_t data);
 
-		static uint32_t read(int base, int sub);
-		static uint8_t read8bit(int base, int sub);
-		static uint32_t readOTP(uint8_t addr);
+                static uint32_t read(int base, int sub);
+                static uint8_t read8bit(int base, int sub);
+                static void readBytes(int base, int sub, uint8_t* buffer, size_t length);
+                static uint32_t readOTP(uint8_t addr);
 		
 		// Delayed Sending Settings
 		static void writeTXDelay(uint32_t delay);
