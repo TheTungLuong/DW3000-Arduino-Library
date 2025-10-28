@@ -17,12 +17,12 @@ void setup() {
   delay(200);
 
   if (!DW3000.checkSPI()) {
-    Serial.println("[ERROR] Could not establish SPI Connection to DW3000! Please make sure that all pins are set correctly.");
+    Serial.println(F("[ERROR] Could not establish SPI Connection to DW3000! Please make sure that all pins are set correctly."));
     while (1) {}
   }
 
   while (!DW3000.checkForIDLE()) {
-    Serial.println("[ERROR] IDLE1 FAILED\r");
+    Serial.println(F("[ERROR] IDLE1 FAILED\r"));
     delay(1000);
   }
 
@@ -30,46 +30,51 @@ void setup() {
   delay(200);
 
   if (!DW3000.checkForIDLE()) {
-    Serial.println("[ERROR] IDLE2 FAILED\r");
+    Serial.println(F("[ERROR] IDLE2 FAILED\r"));
     while (1) {}
   }
 
   DW3000.init();
   DW3000.setupGPIO();
-  Serial.println("[INFO] CIR RX Stream setup complete.");
-  Serial.print("[INFO] Streaming ");
+  DW3000.clearSystemStatus();
+
+  Serial.println(F("[INFO] CIR RX Stream setup complete."));
+  Serial.print(F("[INFO] Streaming "));
   Serial.print(CIR_TOTAL_SAMPLES);
-  Serial.println(" CIR samples per received frame.");
+  Serial.println(F(" CIR samples per received frame."));
 }
 
 void loop() {
   DW3000.standardRX();
 
   while (!(rx_status = DW3000.receivedFrameSucc())) {
+    yield();
   }
 
   if (rx_status == 1) {
     DW3000.pullLEDHigh(1);
 
-    Serial.print("[INFO] Received frame #");
+    Serial.print(F("[INFO] Received frame #"));
     Serial.println(frame_counter);
 
     streamCIR(frame_counter);
     frame_counter++;
 
     DW3000.clearSystemStatus();
+    DW3000.standardRX();
 
     DW3000.pullLEDLow(1);
   } else {
-    Serial.println("[ERROR] Receiver Error occured! Aborting event.");
+    Serial.println(F("[ERROR] Receiver Error occured! Aborting event."));
     DW3000.clearSystemStatus();
+    DW3000.standardRX();
   }
 }
 
 void streamCIR(uint32_t frameIndex) {
   uint8_t raw[CIR_CHUNK_SAMPLES * CIR_BYTES_PER_SAMPLE];
 
-  Serial.print("CIR_BEGIN,");
+  Serial.print(F("CIR_BEGIN,"));
   Serial.println(frameIndex);
 
   for (uint16_t sampleBase = 0; sampleBase < CIR_TOTAL_SAMPLES; sampleBase += CIR_CHUNK_SAMPLES) {
@@ -89,7 +94,7 @@ void streamCIR(uint32_t frameIndex) {
       int16_t imagPart = (int16_t)((raw[rawIndex + 3] << 8) | raw[rawIndex + 2]);
       uint32_t magnitudeSq = (int32_t)realPart * realPart + (int32_t)imagPart * imagPart;
 
-      Serial.print("CIR,");
+      Serial.print(F("CIR,"));
       Serial.print(frameIndex);
       Serial.print(',');
       Serial.print((uint16_t)(CIR_FIRST_SAMPLE_OFFSET + sampleBase + i));
@@ -102,5 +107,5 @@ void streamCIR(uint32_t frameIndex) {
     }
   }
 
-  Serial.println("CIR_END");
+  Serial.println(F("CIR_END"));
 }

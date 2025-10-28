@@ -33,6 +33,10 @@ xlabel(axesHandle, 'Sample Index');
 ylabel(axesHandle, '|CIR|^2');
 frameLabel = title(axesHandle, 'Waiting for data...');
 
+realBuffer = zeros(totalSamples, 1);
+imagBuffer = zeros(totalSamples, 1);
+magBuffer = zeros(totalSamples, 1);
+complexMask = false(totalSamples, 1);
 dataBuffer = zeros(totalSamples, 1);
 frameIndex = -1;
 sampleOffset = NaN;
@@ -55,9 +59,16 @@ while isvalid(figureHandle)
         if numel(tokens) >= 2
             frameIndex = str2double(tokens{2});
         end
+        realBuffer(:) = 0;
+        imagBuffer(:) = 0;
+        magBuffer(:) = 0;
+        complexMask(:) = false;
         dataBuffer(:) = 0;
         sampleOffset = NaN;
     elseif startsWith(line, "CIR_END", 'IgnoreCase', true)
+        dataBuffer = realBuffer.^2 + imagBuffer.^2;
+        missingMagnitude = ~complexMask & (magBuffer ~= 0);
+        dataBuffer(missingMagnitude) = magBuffer(missingMagnitude);
         set(plotHandle, 'YData', dataBuffer);
         if ~isnan(frameIndex)
             set(frameLabel, 'String', sprintf('DW3000 CIR frame %d', frameIndex));
@@ -78,8 +89,19 @@ while isvalid(figureHandle)
         if bufferIndex < 1 || bufferIndex > totalSamples
             continue;
         end
-        magnitudeSq = str2double(tokens{6});
-        dataBuffer(bufferIndex) = magnitudeSq;
+        realVal = str2double(tokens{4});
+        imagVal = str2double(tokens{5});
+        if ~isnan(realVal)
+            realBuffer(bufferIndex) = realVal;
+        end
+        if ~isnan(imagVal)
+            imagBuffer(bufferIndex) = imagVal;
+        end
+        complexMask(bufferIndex) = (~isnan(realVal)) && (~isnan(imagVal));
+        magVal = str2double(tokens{6});
+        if ~isnan(magVal)
+            magBuffer(bufferIndex) = magVal;
+        end
     else
         fprintf('%s\n', line);
     end
