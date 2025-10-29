@@ -56,37 +56,23 @@ int DW3000Class::config[] = {
 };
 
 static uint8_t buildSpiHeader(uint32_t base, uint32_t sub, bool write, uint8_t* header) {
-    uint32_t headerValue = 0;
+    uint8_t headerLen = 1;
 
-    if (write) {
-        headerValue |= 0x80;
-    }
-
-    headerValue |= (base & 0x1F) << 1;
+    header[0] = (write ? 0x80 : 0x00) | ((base & 0x3F) << 1);
 
     if (sub > 0) {
-        headerValue |= 0x40;
-        headerValue <<= 8;
-        headerValue |= ((sub & 0x7F) << 2);
+        header[0] |= 0x40; // enable sub-addressing
+        header[1] = (uint8_t)(sub & 0x7F);
+        headerLen = 2;
 
         if (sub > 0x7F) {
-            headerValue <<= 8;
-            headerValue |= ((sub >> 6) & 0xFF);
-            header[0] = (uint8_t)((headerValue >> 16) & 0xFF);
-            header[1] = (uint8_t)((headerValue >> 8) & 0xFF);
-            header[2] = (uint8_t)(headerValue & 0xFF);
-            return 3;
+            header[1] |= 0x80; // indicate extended address
+            header[2] = (uint8_t)((sub >> 7) & 0xFF);
+            headerLen = 3;
         }
     }
 
-    if (headerValue > 0xFF) {
-        header[0] = (uint8_t)((headerValue >> 8) & 0xFF);
-        header[1] = (uint8_t)(headerValue & 0xFF);
-        return 2;
-    }
-
-    header[0] = (uint8_t)(headerValue & 0xFF);
-    return 1;
+    return headerLen;
 }
 
 
