@@ -50,10 +50,11 @@ class DW3000Class {
 		static void setPHRMode(uint8_t data);
 		static void setPHRRate(uint8_t data);
 
-		// Protocol Settings
-		static void setMode(int mode);
-		static void setTXFrame(unsigned long long frame_data);
-		static void setFrameLength(int frame_len);
+                // Protocol Settings
+                static void setMode(int mode);
+                static void setTXFrame(unsigned long long frame_data);
+                static void writeTXBuffer(const uint8_t* data, size_t length, uint16_t offset = 0);
+                static void setFrameLength(int frame_len);
 		static void setTXAntennaDelay(int delay);
 		static void setSenderID(int senderID);
 		static void setDestinationID(int destID);

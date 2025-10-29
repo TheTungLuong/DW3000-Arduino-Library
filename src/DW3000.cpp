@@ -599,6 +599,34 @@ void DW3000Class::setTXFrame(unsigned long long frame_data) {  // deprecated! us
     write(TX_BUFFER_REG, 0x00, frame_data);
 }
 
+void DW3000Class::writeTXBuffer(const uint8_t* data, size_t length, uint16_t offset) {
+    if (data == nullptr || length == 0) {
+        return;
+    }
+
+    const size_t maxFrameBytes = 1023 - FCS_LEN;
+    if (offset + length > maxFrameBytes) {
+        Serial.println("[ERROR] TX buffer write exceeds maximum frame length. Truncating payload.");
+        if (offset >= maxFrameBytes) {
+            return;
+        }
+        length = maxFrameBytes - offset;
+    }
+
+    uint8_t header[3];
+    uint8_t headerLen = buildSpiHeader(TX_BUFFER_REG, offset, true, header);
+
+    digitalWrite(CHIP_SELECT_PIN, LOW);
+    for (uint8_t i = 0; i < headerLen; i++) {
+        SPI.transfer(header[i]);
+    }
+
+    for (size_t i = 0; i < length; i++) {
+        SPI.transfer(data[i]);
+    }
+    digitalWrite(CHIP_SELECT_PIN, HIGH);
+}
+
 /*
  Sets the frames data length in bytes
  @param frameLen The length of the data in bytes
