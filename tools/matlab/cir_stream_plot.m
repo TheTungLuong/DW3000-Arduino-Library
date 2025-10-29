@@ -13,6 +13,16 @@ function cir_stream_plot(port, baudrate, totalSamples)
 %
 %   Press Ctrl+C in the MATLAB command window to stop streaming.
 
+if nargin < 1 || isempty(port)
+    availablePorts = serialportlist("available");
+    if isempty(availablePorts)
+        error("CIR stream error: no serial ports detected. Specify the PORT argument explicitly.");
+    end
+
+    port = availablePorts(1);
+    fprintf("CIR stream using detected serial port: %s\n", port);
+end
+
 if nargin < 2 || isempty(baudrate)
     baudrate = 115200;
 end
