@@ -1,8 +1,11 @@
 function cir_stream_plot(port, baudrate, totalSamples)
 % CIR_STREAM_PLOT  Stream CIR samples from the DW3000 RX example via serial.
 %   CIR_STREAM_PLOT(PORT) opens the serial PORT at 115200 baud and plots the
-%   magnitude^2 of the CIR samples in real time as they are emitted by the
-%   dw3000\_rx\_cir\_stream Arduino sketch.
+%   magnitude of the CIR samples in real time as they are emitted by the
+%   dw3000\_rx\_cir\_stream Arduino sketch. The figure title highlights the
+%   |CIR| magnitude trace together with the corresponding frame number.
+%   The X axis advances by TOTALSAMPLES with every frame so the sample
+%   index ticks follow the CIR stream (0, TOTALSAMPLES, 2*TOTALSAMPLES, ...).
 %
 %   CIR_STREAM_PLOT(PORT, BAUDRATE, TOTALSAMPLES) allows overriding the
 %   serial configuration as well as the number of samples expected per
@@ -40,16 +43,20 @@ figureHandle = figure('Name', 'DW3000 CIR Stream', 'NumberTitle', 'off');
 axesHandle = axes('Parent', figureHandle);
 plotHandle = plot(axesHandle, zeros(totalSamples, 1));
 xlabel(axesHandle, 'Sample Index');
-ylabel(axesHandle, '|CIR|^2');
-frameLabel = title(axesHandle, 'Waiting for data...');
+ylabel(axesHandle, '|CIR| Magnitude');
+frameLabel = title(axesHandle, 'Waiting for CIR data (|CIR| magnitude)...');
 
 realBuffer = zeros(totalSamples, 1);
 imagBuffer = zeros(totalSamples, 1);
 magBuffer = zeros(totalSamples, 1);
 complexMask = false(totalSamples, 1);
 dataBuffer = zeros(totalSamples, 1);
+sampleIndexBuffer = (0:totalSamples-1)';
+set(plotHandle, 'XData', sampleIndexBuffer);
 frameIndex = -1;
 sampleOffset = NaN;
+frameSequence = -1;
+frameBaseIndex = 0;
 
 while isvalid(figureHandle)
     try
@@ -69,6 +76,11 @@ while isvalid(figureHandle)
         if numel(tokens) >= 2
             frameIndex = str2double(tokens{2});
         end
+        frameSequence = frameSequence + 1;
+        frameBaseIndex = frameSequence * totalSamples;
+        sampleIndexBuffer = frameBaseIndex + (0:totalSamples-1)';
+        set(plotHandle, 'XData', sampleIndexBuffer);
+        xlim(axesHandle, [sampleIndexBuffer(1), sampleIndexBuffer(end)]);
         realBuffer(:) = 0;
         imagBuffer(:) = 0;
         magBuffer(:) = 0;
@@ -76,14 +88,15 @@ while isvalid(figureHandle)
         dataBuffer(:) = 0;
         sampleOffset = NaN;
     elseif startsWith(line, "CIR_END", 'IgnoreCase', true)
-        dataBuffer = realBuffer.^2 + imagBuffer.^2;
+        dataBuffer = hypot(realBuffer, imagBuffer);
         missingMagnitude = ~complexMask & (magBuffer ~= 0);
-        dataBuffer(missingMagnitude) = magBuffer(missingMagnitude);
-        set(plotHandle, 'YData', dataBuffer);
+        dataBuffer(missingMagnitude) = sqrt(max(magBuffer(missingMagnitude), 0));
+        set(plotHandle, 'XData', sampleIndexBuffer, 'YData', dataBuffer);
+        xlim(axesHandle, [sampleIndexBuffer(1), sampleIndexBuffer(end)]);
         if ~isnan(frameIndex)
-            set(frameLabel, 'String', sprintf('DW3000 CIR frame %d', frameIndex));
+            set(frameLabel, 'String', sprintf('DW3000 CIR frame %d - |CIR| magnitude', frameIndex));
         else
-            set(frameLabel, 'String', 'DW3000 CIR frame (unknown)');
+            set(frameLabel, 'String', 'DW3000 CIR frame (unknown) - |CIR| magnitude');
         end
         drawnow limitrate;
     elseif startsWith(line, "CIR,", 'IgnoreCase', true)
