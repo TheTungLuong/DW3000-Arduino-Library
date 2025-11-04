@@ -6,7 +6,6 @@ static uint32_t frame_counter = 0;
 const uint16_t CIR_TOTAL_SAMPLES = 256;      // Number of complex CIR samples per frame to stream
 const uint16_t CIR_CHUNK_SAMPLES = 32;       // How many samples to read per SPI burst
 const uint16_t CIR_FIRST_SAMPLE_OFFSET = 0;  // Offset inside the accumulator (in samples)
-const uint8_t CIR_BYTES_PER_SAMPLE = 4;      // 16 bit I + 16 bit Q
 
 void streamCIR(uint32_t frameIndex);
 
@@ -72,7 +71,7 @@ void loop() {
 }
 
 void streamCIR(uint32_t frameIndex) {
-  uint8_t raw[CIR_CHUNK_SAMPLES * CIR_BYTES_PER_SAMPLE];
+  DW3000CIRSample samples[CIR_CHUNK_SAMPLES];
 
   Serial.print(F("CIR_BEGIN,"));
   Serial.println(frameIndex);
@@ -83,15 +82,15 @@ void streamCIR(uint32_t frameIndex) {
       samplesThisChunk = CIR_TOTAL_SAMPLES - sampleBase;
     }
 
-    size_t bytesToRead = (size_t)samplesThisChunk * CIR_BYTES_PER_SAMPLE;
-    uint16_t byteOffset = (CIR_FIRST_SAMPLE_OFFSET + sampleBase) * CIR_BYTES_PER_SAMPLE;
+    size_t readCount = DW3000.readCIRSamples(CIR_FIRST_SAMPLE_OFFSET + sampleBase, samples, samplesThisChunk);
+    if (readCount == 0) {
+      Serial.println(F("[ERROR] CIR read returned no samples."));
+      break;
+    }
 
-    DW3000.readBytes(ACC_MEM_REG, byteOffset, raw, bytesToRead);
-
-    for (uint16_t i = 0; i < samplesThisChunk; i++) {
-      uint16_t rawIndex = i * CIR_BYTES_PER_SAMPLE;
-      int16_t realPart = (int16_t)((raw[rawIndex + 1] << 8) | raw[rawIndex]);
-      int16_t imagPart = (int16_t)((raw[rawIndex + 3] << 8) | raw[rawIndex + 2]);
+    for (size_t i = 0; i < readCount; i++) {
+      int16_t realPart = samples[i].i;
+      int16_t imagPart = samples[i].q;
       uint32_t magnitudeSq = (int32_t)realPart * realPart + (int32_t)imagPart * imagPart;
 
       Serial.print(F("CIR,"));

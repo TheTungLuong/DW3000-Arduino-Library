@@ -55,6 +55,27 @@ int DW3000Class::config[] = {
     PHR_RATE_850KB       // PHR Rate
 };
 
+namespace {
+constexpr size_t kCirBytesPerSample = 4U;
+constexpr size_t kCirMaxChunkSamples = 32U;
+constexpr uint32_t kCirValueMask = 0x003FFFFF;
+constexpr uint16_t kPreambleAccumulationMask = 0x0FFF;
+constexpr double kPrfConst64MHz = 121.7;
+
+uint32_t read24BitRegister(int base, int sub) {
+    uint8_t raw[3] = {0};
+    DW3000Class::readBytes(base, sub, raw, sizeof(raw));
+    return static_cast<uint32_t>(raw[0]) |
+           (static_cast<uint32_t>(raw[1]) << 8) |
+           (static_cast<uint32_t>(raw[2]) << 16);
+}
+
+uint16_t extractFirstPathAmplitude(int base, int sub) {
+    uint32_t raw = read24BitRegister(base, sub) & kCirValueMask;
+    return static_cast<uint16_t>(raw >> 2);
+}
+}  // namespace
+
 static uint8_t buildSpiHeader(uint32_t base, uint32_t sub, bool write, uint8_t* header) {
     uint32_t headerValue = 0;
 
@@ -747,24 +768,23 @@ bool DW3000Class::checkSPI() {
  @return The Signal Strength of the received frame in dBm
 */
 double DW3000Class::getSignalStrength() {
-    uint32_t CIRpower = read(0x0C, 0x2C) & 0x1FF;
-    uint32_t PAC_val = read(0x0C, 0x58) & 0xFFF;
-    unsigned int DGC_decision = (read(0x03, 0x60) >> 28) & 0x7;
-    double PRF_const = 121.7;
+    DW3000CIRDiagnostics diagnostics = {};
+    if (!readCIRDiagnostics(diagnostics)) {
+        return 0.0;
+    }
 
-    /*Serial.println("Signal Strength Data:");
-    Serial.print("CIR Power: ");
-    Serial.println(CIRpower);
-    Serial.print("PAC val: ");
-    Serial.println(PAC_val);
-    Serial.print("DGC decision: ");
-    Serial.println(DGC_decision);*/
+    if (diagnostics.preambleAccumCount == 0 || diagnostics.cirPower == 0) {
+        return 0.0;
+    }
 
-    // return 10 * log10((CIRpower * (1 << 21)) / pow(PAC_val, 2)) + (6 * DGC_decision) - PRF_const;
-    return 10 * log10(((double)CIRpower * (double)(1UL << 21)) /
-                  ((double)PAC_val * (double)PAC_val))
-       + (6 * DGC_decision) - PRF_const;
+    double numerator = static_cast<double>(diagnostics.cirPower) * static_cast<double>(1UL << 21);
+    double denominator = static_cast<double>(diagnostics.preambleAccumCount) * static_cast<double>(diagnostics.preambleAccumCount);
 
+    if (denominator <= 0.0 || numerator <= 0.0) {
+        return 0.0;
+    }
+
+    return 10.0 * log10(numerator / denominator) + (6.0 * diagnostics.dgcDecision) - kPrfConst64MHz;
 }
 
 /*
@@ -772,15 +792,77 @@ double DW3000Class::getSignalStrength() {
  @return The First Path Signal Strength of the received frame in dBm
 */
 double DW3000Class::getFirstPathSignalStrength() {
-    float f1 = (read(0x0C, 0x30) & 0x3FFFFF) >> 2;
-    float f2 = (read(0x0C, 0x34) & 0x3FFFFF) >> 2;
-    float f3 = (read(0x0C, 0x38) & 0x3FFFFF) >> 2;
+    DW3000CIRDiagnostics diagnostics = {};
+    if (!readCIRDiagnostics(diagnostics)) {
+        return 0.0;
+    }
 
-    uint32_t PAC_val = read(0x0C, 0x58) & 0xFFF;
-    unsigned int DGC_decision = (read(0x03, 0x60) >> 28) & 0x7;
-    double PRF_const = 121.7;
+    if (diagnostics.preambleAccumCount == 0) {
+        return 0.0;
+    }
 
-    return 10 * log10((pow(f1, 2) + pow(f2, 2) + pow(f3, 2)) / pow(PAC_val, 2)) + (6 * DGC_decision) - PRF_const;
+    double fpAmpl1 = static_cast<double>(diagnostics.fpAmpl1);
+    double fpAmpl2 = static_cast<double>(diagnostics.fpAmpl2);
+    double fpAmpl3 = static_cast<double>(diagnostics.fpAmpl3);
+    double numerator = (fpAmpl1 * fpAmpl1) + (fpAmpl2 * fpAmpl2) + (fpAmpl3 * fpAmpl3);
+    double denominator = static_cast<double>(diagnostics.preambleAccumCount) * static_cast<double>(diagnostics.preambleAccumCount);
+
+    if (denominator <= 0.0 || numerator <= 0.0) {
+        return 0.0;
+    }
+
+    return 10.0 * log10(numerator / denominator) + (6.0 * diagnostics.dgcDecision) - kPrfConst64MHz;
+}
+
+bool DW3000Class::readCIRDiagnostics(DW3000CIRDiagnostics& diagnostics) {
+    diagnostics.cirPower = read24BitRegister(CIA_REG1, 0x2C) & kCirValueMask;  // See DW3000 User Manual, RX diagnostics register map.
+
+    uint8_t pacRaw[2] = {0};
+    readBytes(CIA_REG1, 0x58, pacRaw, sizeof(pacRaw));
+    diagnostics.preambleAccumCount = static_cast<uint16_t>(pacRaw[0]) |
+                                     (static_cast<uint16_t>(pacRaw[1]) << 8);
+    diagnostics.preambleAccumCount &= kPreambleAccumulationMask;
+
+    diagnostics.fpAmpl1 = extractFirstPathAmplitude(CIA_REG1, 0x30);
+    diagnostics.fpAmpl2 = extractFirstPathAmplitude(CIA_REG1, 0x34);
+    diagnostics.fpAmpl3 = extractFirstPathAmplitude(CIA_REG1, 0x38);
+
+    diagnostics.dgcDecision = static_cast<uint8_t>((read(RX_TUNE_REG, 0x60) >> 28) & 0x7);
+
+    return true;
+}
+
+size_t DW3000Class::readCIRSamples(uint16_t firstSample, DW3000CIRSample* samples, size_t count) {
+    if (samples == nullptr || count == 0) {
+        return 0;
+    }
+
+    size_t totalSamplesRead = 0;
+    uint8_t raw[kCirMaxChunkSamples * kCirBytesPerSample];
+
+    while (totalSamplesRead < count) {
+        size_t samplesThisChunk = count - totalSamplesRead;
+        if (samplesThisChunk > kCirMaxChunkSamples) {
+            samplesThisChunk = kCirMaxChunkSamples;
+        }
+
+        size_t bytesToRead = samplesThisChunk * kCirBytesPerSample;
+        uint32_t byteOffset = static_cast<uint32_t>(firstSample + totalSamplesRead) * kCirBytesPerSample;
+
+        readBytes(ACC_MEM_REG, byteOffset, raw, bytesToRead);
+
+        for (size_t i = 0; i < samplesThisChunk; i++) {
+            size_t rawIndex = i * kCirBytesPerSample;
+            int16_t realPart = static_cast<int16_t>((raw[rawIndex + 1] << 8) | raw[rawIndex]);
+            int16_t imagPart = static_cast<int16_t>((raw[rawIndex + 3] << 8) | raw[rawIndex + 2]);
+            samples[totalSamplesRead + i].i = realPart;
+            samples[totalSamplesRead + i].q = imagPart;
+        }
+
+        totalSamplesRead += samplesThisChunk;
+    }
+
+    return totalSamplesRead;
 }
 
 /*
