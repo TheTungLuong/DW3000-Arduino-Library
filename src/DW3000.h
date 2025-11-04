@@ -18,6 +18,20 @@
 #include "Arduino.h"
 #include "DW3000Constants.h"
 
+struct DW3000CIRSample {
+        int16_t i;
+        int16_t q;
+};
+
+struct DW3000CIRDiagnostics {
+        uint32_t cirPower;
+        uint16_t preambleAccumCount;
+        uint16_t fpAmpl1;
+        uint16_t fpAmpl2;
+        uint16_t fpAmpl3;
+        uint8_t dgcDecision;
+};
+
 
 class DW3000Class {
 	public:
@@ -68,9 +82,11 @@ class DW3000Class {
 		static bool checkSPI();
 
 		// Radio Analytics
-		static double getSignalStrength();
-		static double getFirstPathSignalStrength();
-		static int getTXAntennaDelay();
+                static double getSignalStrength();
+                static double getFirstPathSignalStrength();
+                static bool readCIRDiagnostics(DW3000CIRDiagnostics& diagnostics);
+                static size_t readCIRSamples(uint16_t firstSample, DW3000CIRSample* samples, size_t count);
+                static int getTXAntennaDelay();
 		static long double getClockOffset();
 		static long double getClockOffset(int32_t ext_clock_offset);
 		static int getRawClockOffset();
