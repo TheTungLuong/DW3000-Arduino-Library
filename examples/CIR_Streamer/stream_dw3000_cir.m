@@ -6,23 +6,34 @@ function captureTable = stream_dw3000_cir(serialPort, numSamples)
 %   Arduino sketch, streams the real, imaginary, and magnitude traces in
 %   MATLAB, and returns a table containing the captured samples.
 %
+%   SERIALPORT is optional. If omitted or empty, an interactive prompt is
+%   shown listing the currently available serial devices so you can select
+%   the Arduino's port without editing this file.
+%
+%   NUMSAMPLES defaults to 1016 (the CIR_Streamer sketch's preamble
+%   capture length) when not provided.
+%
 %   Before running this helper:
 %     * Upload the CIR_Streamer.ino sketch to your Arduino board.
 %     * Reset or power-cycle the board so the sketch outputs a single
 %       capture beginning with the header line "#index,I,Q,mag".
-%     * Update SERIALPORT to match the COM port used by your Arduino.
 %
 %   Example:
-%     % Capture the default 1016 preamble samples on Windows COM5
-%     capture = stream_dw3000_cir("COM5", 1016);
+%     % Prompt for a port and capture the default 1016 preamble samples
+%     capture = stream_dw3000_cir();
+%
+%     % Capture 512 samples from an explicitly provided port
+%     capture = stream_dw3000_cir("COM5", 512);
 %
 %   The script closes the serial connection automatically once the
 %   requested number of rows has been read.
 
 arguments
-    serialPort (1, :) char
-    numSamples (1, 1) {mustBePositive, mustBeInteger}
+    serialPort (1, :) char = ''
+    numSamples (1, 1) {mustBePositive, mustBeInteger} = 1016
 end
+
+serialPort = selectSerialPort(serialPort);
 
 baudRate = 921600;
 sp = serialport(serialPort, baudRate, "Timeout", 10);
@@ -121,6 +132,42 @@ captureTable = table(indices, realVals, imagVals, magVals, ...
     'VariableNames', {'Index', 'Real', 'Imag', 'Magnitude'});
 
 clear sp;
+
+    function chosenPort = selectSerialPort(initialPort)
+        if ~(isstring(initialPort) || ischar(initialPort))
+            error('Serial port must be specified as text.');
+        end
+
+        if ~isempty(strtrim(initialPort))
+            chosenPort = char(initialPort);
+            return;
+        end
+
+        availablePorts = serialportlist("available");
+        if isempty(availablePorts)
+            error(['No available serial ports detected. Connect the Arduino and ' ...
+                'specify its port explicitly when calling stream_dw3000_cir.']);
+        end
+
+        fprintf('Available serial ports:\n');
+        for ii = 1:numel(availablePorts)
+            fprintf('  %d) %s\n', ii, char(availablePorts(ii)));
+        end
+
+        selectionPrompt = sprintf('Select port [1-%d]: ', numel(availablePorts));
+        selection = input(selectionPrompt);
+
+        if isempty(selection) || ~isnumeric(selection) || ~isscalar(selection)
+            error('Invalid selection: please enter the number corresponding to the desired port.');
+        end
+
+        selection = floor(selection);
+        if selection < 1 || selection > numel(availablePorts)
+            error('Selection %d is out of range.', selection);
+        end
+
+        chosenPort = char(availablePorts(selection));
+    end
 
     function cleanupSerial()
         if exist('sp', 'var') && ~isempty(sp)
