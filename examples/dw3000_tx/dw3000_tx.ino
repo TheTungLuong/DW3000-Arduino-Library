@@ -1,6 +1,9 @@
 #include "DW3000.h"
 
-#define TX_SENT_DELAY 500
+#define SERIAL_BAUD    921600UL  // Match the CIR streaming tools for consistent capture
+#define TX_SENT_DELAY  500
+
+#define STREAM_TX_SAMPLES 1
 
 struct CirSample {
   int16_t i;
@@ -44,22 +47,49 @@ size_t encodeCirFrame(uint16_t counter)
   return bufferIndex;
 }
 
+static void printCsvHeader() {
+#if STREAM_TX_SAMPLES
+  Serial.println(F("#frame,index,I,Q"));
+#endif
+}
+
+static void streamFrameSamples(uint16_t counter) {
+#if STREAM_TX_SAMPLES
+  for (uint8_t idx = 0; idx < CIR_SAMPLE_COUNT; idx++) {
+    Serial.print(counter);
+    Serial.print(',');
+    Serial.print(idx);
+    Serial.print(',');
+    Serial.print(cirSamples[idx].i);
+    Serial.print(',');
+    Serial.println(cirSamples[idx].q);
+  }
+#else
+  (void)counter;
+#endif
+}
+
 void setup()
 {
-  Serial.begin(115200); // Init Serial
+  Serial.begin(SERIAL_BAUD); // Init Serial fast enough for downstream capture tools
+#if defined(USBCON) || defined(ARDUINO_ARCH_SAMD) || defined(ARDUINO_ARCH_STM32)
+  while (!Serial) {
+    ;
+  }
+#endif
   DW3000.begin(); // Init SPI
   DW3000.hardReset(); // hard reset in case that the chip wasn't disconnected from power
   delay(200); // Wait for DW3000 chip to wake up
 
   if(!DW3000.checkSPI())
   {
-    Serial.println("[ERROR] Could not establish SPI Connection to DW3000! Please make sure that all pins are set correctly.");
+    Serial.println(F("#ERROR Could not establish SPI Connection to DW3000! Please make sure that all pins are set correctly."));
     while(100);
   }
 
   while (!DW3000.checkForIDLE()) // Make sure that chip is in IDLE before continuing
   {
-    Serial.println("[ERROR] IDLE1 FAILED\r");
+    Serial.println(F("#ERROR IDLE1 FAILED"));
     delay(1000);
   }
 
@@ -69,14 +99,16 @@ void setup()
 
   if (!DW3000.checkForIDLE())
   {
-    Serial.println("[ERROR] IDLE2 FAILED\r");
+    Serial.println(F("#ERROR IDLE2 FAILED"));
     while (100);
   }
 
 
   DW3000.init(); // Initialize chip (write default values, calibration, etc.)
   DW3000.setupGPIO(); //Setup the DW3000s GPIO pins for use of LEDs
-  Serial.println("[INFO] Setup is finished.");
+  Serial.println(F("#INFO Setup is finished."));
+
+  printCsvHeader();
 
   DW3000.configureAsTX(); // Configure basic settings for frame transmitting
 }
@@ -95,16 +127,12 @@ void loop()
 
   while (!(tx_status = DW3000.sentFrameSucc()))
   {
-    Serial.println("[ERROR] Frame could not be sent succesfully!");
+    Serial.println(F("#ERROR Frame could not be sent succesfully!"));
   };
 
   DW3000.clearSystemStatus(); // Clear event status
 
-  Serial.print("[INFO] Sent CIR frame ");
-  Serial.print(frameCounter);
-  Serial.print(" with ");
-  Serial.print(CIR_SAMPLE_COUNT);
-  Serial.println(" samples.");
+  streamFrameSamples(frameCounter);
   DW3000.pullLEDLow(2);
 
   frameCounter++;
