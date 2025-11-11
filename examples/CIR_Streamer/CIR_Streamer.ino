@@ -7,6 +7,10 @@
  *  - Connect DW3000 module SPI pins to Arduino UNO default SPI: SCK=13, MISO=12, MOSI=11.
  *  - Chip select, reset and IRQ can be reassigned by editing DW_CS, DW_RST and DW_IRQ.
  *  - For other Arduino boards adjust the SPI pins or DW_* pin defines accordingly.
+ *
+ * Usage:
+ *  - Open the Serial Monitor at 921600 baud and send the character 'c' to trigger a capture.
+ *  - Each capture prints "#index,I,Q,mag" followed by streamed samples for easy observation.
  */
 
 #define DW_CS   10
@@ -240,19 +244,10 @@ static void stream_samples(uint16_t startSample, uint16_t sampleCount) {
   }
 }
 
-void setup() {
-  Serial.begin(921600);
-  Serial.println(F("#index,I,Q,mag"));
-
-  pinMode(DW_CS, OUTPUT);
-  pinMode(DW_IRQ, INPUT_PULLUP);
-  digitalWrite(DW_CS, HIGH);
-
-  SPI.begin();
-
-  reset_dw3000();
+static void stream_full_capture() {
   enable_acc_clocks(true);
 
+  Serial.println(F("#index,I,Q,mag"));
   stream_samples(0, NUM_SAMPLES);
 
 #if READ_STS
@@ -263,7 +258,27 @@ void setup() {
   Serial.flush();
 }
 
+void setup() {
+  Serial.begin(921600);
+  pinMode(DW_CS, OUTPUT);
+  pinMode(DW_IRQ, INPUT_PULLUP);
+  digitalWrite(DW_CS, HIGH);
+
+  SPI.begin();
+
+  reset_dw3000();
+  Serial.println(F("DW3000 CIR streamer ready. Send 'c' to capture."));
+}
+
 void loop() {
-  // Nothing to do in loop. Capture happens once during setup().
+  if (Serial.available() == 0) {
+    return;
+  }
+
+  int incoming = Serial.read();
+  if (incoming == 'c' || incoming == 'C') {
+    stream_full_capture();
+    Serial.println(F("DW3000 CIR capture complete. Send 'c' to capture again."));
+  }
 }
 

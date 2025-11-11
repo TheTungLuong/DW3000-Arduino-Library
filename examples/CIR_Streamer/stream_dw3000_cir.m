@@ -1,10 +1,11 @@
-function captureTable = stream_dw3000_cir(serialPort, numSamples)
+function capture = stream_dw3000_cir(serialPort, numSamples)
 %STREAM_DW3000_CIR Capture and plot DW3000 CIR samples over Serial.
-%   T = STREAM_DW3000_CIR(SERIALPORT, NUMSAMPLES) opens SERIALPORT (for
+%   DATA = STREAM_DW3000_CIR(SERIALPORT, NUMSAMPLES) opens SERIALPORT (for
 %   example "COM4" on Windows or "/dev/ttyACM0" on Linux/macOS) at
 %   921600 baud, reads NUMSAMPLES CSV rows produced by the CIR_Streamer
-%   Arduino sketch, streams the real, imaginary, and magnitude traces in
-%   MATLAB, and returns a table containing the captured samples.
+%   Arduino sketch, and plots the real, imaginary, and magnitude traces
+%   using standard MATLAB line plots. The returned DATA struct contains the
+%   numeric vectors that were plotted so additional analysis can be done.
 %
 %   SERIALPORT is optional. If omitted or empty, an interactive prompt is
 %   shown listing the currently available serial devices so you can select
@@ -15,15 +16,15 @@ function captureTable = stream_dw3000_cir(serialPort, numSamples)
 %
 %   Before running this helper:
 %     * Upload the CIR_Streamer.ino sketch to your Arduino board.
-%     * Reset or power-cycle the board so the sketch outputs a single
-%       capture beginning with the header line "#index,I,Q,mag".
+%     * Ensure the board is connected and ready to receive the capture
+%       trigger character.
 %
 %   Example:
 %     % Prompt for a port and capture the default 1016 preamble samples
-%     capture = stream_dw3000_cir();
+%     data = stream_dw3000_cir();
 %
 %     % Capture 512 samples from an explicitly provided port
-%     capture = stream_dw3000_cir("COM5", 512);
+%     data = stream_dw3000_cir("COM5", 512);
 %
 %   The script closes the serial connection automatically once the
 %   requested number of rows has been read.
@@ -41,35 +42,26 @@ configureTerminator(sp, "LF");
 cleanup = onCleanup(@cleanupSerial);
 
 flush(sp);
+write(sp, 'c', "char");
 
-header = strtrim(readline(sp));
-if ~strcmp(header, "#index,I,Q,mag")
-    warning("Unexpected header received: %s", header);
+maxHeaderReads = 10;
+header = "";
+while maxHeaderReads > 0
+    candidate = strtrim(readline(sp));
+    if candidate == ""
+        maxHeaderReads = maxHeaderReads - 1;
+        continue;
+    end
+    if strcmp(candidate, "#index,I,Q,mag")
+        header = candidate;
+        break;
+    end
+    maxHeaderReads = maxHeaderReads - 1;
 end
 
-figureHandle = figure('Name', 'DW3000 CIR Capture', 'NumberTitle', 'off');
-set(figureHandle, 'Color', 'w');
-
-tiledlayout(3, 1, 'TileSpacing', 'compact');
-axReal = nexttile;
-realLine = animatedline(axReal, 'Color', [0.0, 0.45, 0.74]);
-title(axReal, 'CIR Real Component');
-xlabel(axReal, 'Sample Index');
-ylabel(axReal, 'Amplitude');
-
-axImag = nexttile;
-imagLine = animatedline(axImag, 'Color', [0.85, 0.33, 0.10]);
-title(axImag, 'CIR Imaginary Component');
-xlabel(axImag, 'Sample Index');
-ylabel(axImag, 'Amplitude');
-
-axMag = nexttile;
-magLine = animatedline(axMag, 'Color', [0.47, 0.67, 0.19]);
-title(axMag, 'CIR Magnitude');
-xlabel(axMag, 'Sample Index');
-ylabel(axMag, 'Magnitude');
-
-drawnow limitrate;
+if header == ""
+    warning("Did not receive the expected header #index,I,Q,mag.");
+end
 
 samplesRead = 0;
 indices = zeros(numSamples, 1);
@@ -104,10 +96,6 @@ while samplesRead < numSamples
     imagVals(samplesRead) = imagVal;
     magVals(samplesRead) = magVal;
 
-    addpoints(realLine, idx, realVal);
-    addpoints(imagLine, idx, imagVal);
-    addpoints(magLine, idx, magVal);
-    drawnow limitrate;
 end
 
 % Trim arrays in case malformed rows were skipped
@@ -116,20 +104,36 @@ realVals = realVals(1:samplesRead);
 imagVals = imagVals(1:samplesRead);
 magVals = magVals(1:samplesRead);
 
-% Final draw and autoscale after capture
-for ax = [axReal, axImag, axMag]
-    axis(ax, 'tight');
-    grid(ax, 'on');
-end
+figureHandle = figure('Name', 'DW3000 CIR Capture', 'NumberTitle', 'off');
+set(figureHandle, 'Color', 'w');
 
-if isvalid(figureHandle)
-    drawnow;
-end
+tiledlayout(3, 1, 'TileSpacing', 'compact');
+
+axReal = nexttile;
+plot(axReal, indices, realVals, 'Color', [0.0, 0.45, 0.74]);
+title(axReal, 'CIR Real Component');
+xlabel(axReal, 'Sample Index');
+ylabel(axReal, 'Amplitude');
+grid(axReal, 'on');
+
+axImag = nexttile;
+plot(axImag, indices, imagVals, 'Color', [0.85, 0.33, 0.10]);
+title(axImag, 'CIR Imaginary Component');
+xlabel(axImag, 'Sample Index');
+ylabel(axImag, 'Amplitude');
+grid(axImag, 'on');
+
+axMag = nexttile;
+plot(axMag, indices, magVals, 'Color', [0.47, 0.67, 0.19]);
+title(axMag, 'CIR Magnitude');
+xlabel(axMag, 'Sample Index');
+ylabel(axMag, 'Magnitude');
+grid(axMag, 'on');
 
 fprintf('Captured %d samples from %s at %d baud.\n', samplesRead, serialPort, baudRate);
 
-captureTable = table(indices, realVals, imagVals, magVals, ...
-    'VariableNames', {'Index', 'Real', 'Imag', 'Magnitude'});
+capture = struct('index', indices, 'real', realVals, ...
+    'imag', imagVals, 'magnitude', magVals);
 
 clear sp;
 
