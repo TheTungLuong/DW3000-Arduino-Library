@@ -9,8 +9,9 @@
  *  - For other Arduino boards adjust the SPI pins or DW_* pin defines accordingly.
  *
  * Usage:
- *  - Open the Serial Monitor at 921600 baud and send the character 'c' to trigger a capture.
+ *  - Open the Serial Monitor at 921600 baud to watch the streamed CIR samples.
  *  - Each capture prints "#index,I,Q,mag" followed by streamed samples for easy observation.
+ *  - Send 'c' over the Serial Monitor to trigger another capture without resetting the board.
  */
 
 #define DW_CS   10
@@ -260,6 +261,10 @@ static void stream_full_capture() {
 
 void setup() {
   Serial.begin(921600);
+#if defined(ARDUINO_AVR_UNO)
+  // Allow time for the USB CDC bridge to enumerate after reset.
+  delay(200);
+#endif
   pinMode(DW_CS, OUTPUT);
   pinMode(DW_IRQ, INPUT_PULLUP);
   digitalWrite(DW_CS, HIGH);
@@ -267,18 +272,16 @@ void setup() {
   SPI.begin();
 
   reset_dw3000();
-  Serial.println(F("DW3000 CIR streamer ready. Send 'c' to capture."));
+  delay(10);
+  stream_full_capture();
 }
 
 void loop() {
-  if (Serial.available() == 0) {
-    return;
-  }
-
-  int incoming = Serial.read();
-  if (incoming == 'c' || incoming == 'C') {
-    stream_full_capture();
-    Serial.println(F("DW3000 CIR capture complete. Send 'c' to capture again."));
+  if (Serial.available()) {
+    int incoming = Serial.read();
+    if (incoming == 'c' || incoming == 'C') {
+      stream_full_capture();
+    }
   }
 }
 

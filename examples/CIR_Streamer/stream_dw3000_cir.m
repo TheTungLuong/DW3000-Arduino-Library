@@ -16,8 +16,8 @@ function capture = stream_dw3000_cir(serialPort, numSamples)
 %
 %   Before running this helper:
 %     * Upload the CIR_Streamer.ino sketch to your Arduino board.
-%     * Ensure the board is connected and ready to receive the capture
-%       trigger character.
+%     * Ensure the board is connected; the sketch automatically streams a
+%       capture on reset and whenever it receives the character 'c'.
 %
 %   Example:
 %     % Prompt for a port and capture the default 1016 preamble samples
@@ -42,20 +42,23 @@ configureTerminator(sp, "LF");
 cleanup = onCleanup(@cleanupSerial);
 
 flush(sp);
-write(sp, 'c', "char");
+pause(2.0);  % Allow the Arduino time to reset and begin streaming.
 
-maxHeaderReads = 10;
+maxHeaderReads = 50;
 header = "";
 while maxHeaderReads > 0
-    candidate = strtrim(readline(sp));
-    if candidate == ""
+    rawLine = safeReadline(sp);
+    if strlength(rawLine) == 0
         maxHeaderReads = maxHeaderReads - 1;
         continue;
     end
-    if strcmp(candidate, "#index,I,Q,mag")
+
+    candidate = strtrim(rawLine);
+    if candidate == "#index,I,Q,mag"
         header = candidate;
         break;
     end
+
     maxHeaderReads = maxHeaderReads - 1;
 end
 
@@ -69,14 +72,27 @@ realVals = zeros(numSamples, 1);
 imagVals = zeros(numSamples, 1);
 magVals = zeros(numSamples, 1);
 
+stallCounter = 0;
+
 while samplesRead < numSamples
-    rawLine = readline(sp);
-    if rawLine == ""
+    rawLine = safeReadline(sp);
+    if strlength(rawLine) == 0
+        stallCounter = stallCounter + 1;
+        if stallCounter > max(100, numSamples * 2)
+            error('Timed out waiting for CIR samples. Read %d of %d rows.', samplesRead, numSamples);
+        end
         continue;
     end
-    tokens = split(strtrim(rawLine), ',');
+
+    trimmed = strtrim(rawLine);
+    if trimmed == "#index,I,Q,mag"
+        % Skip stray headers (e.g., from manual retriggers).
+        continue;
+    end
+
+    tokens = split(trimmed, ',');
     if numel(tokens) < 4
-        warning("Skipping malformed row: %s", rawLine);
+        warning("Skipping malformed row: %s", trimmed);
         continue;
     end
 
@@ -86,7 +102,7 @@ while samplesRead < numSamples
     magVal = str2double(tokens(4));
 
     if any(isnan([idx, realVal, imagVal, magVal]))
-        warning("Skipping row containing NaN values: %s", rawLine);
+        warning("Skipping row containing NaN values: %s", trimmed);
         continue;
     end
 
@@ -95,6 +111,7 @@ while samplesRead < numSamples
     realVals(samplesRead) = realVal;
     imagVals(samplesRead) = imagVal;
     magVals(samplesRead) = magVal;
+    stallCounter = 0;
 
 end
 
@@ -171,6 +188,17 @@ clear sp;
         end
 
         chosenPort = char(availablePorts(selection));
+    end
+
+    function line = safeReadline(port)
+        line = "";
+        try
+            line = readline(port);
+        catch me
+            if ~contains(me.message, "Timeout")
+                rethrow(me);
+            end
+        end
     end
 
     function cleanupSerial()
