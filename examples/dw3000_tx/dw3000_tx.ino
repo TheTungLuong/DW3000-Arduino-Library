@@ -1,4 +1,5 @@
 #include "DW3000.h"
+#include <math.h>
 
 #define SERIAL_BAUD    921600UL  // Match the CIR streaming tools for consistent capture
 #define TX_SENT_DELAY  500
@@ -47,22 +48,24 @@ size_t encodeCirFrame(uint16_t counter)
   return bufferIndex;
 }
 
-static void printCsvHeader() {
-#if STREAM_TX_SAMPLES
-  Serial.println(F("#frame,index,I,Q"));
-#endif
-}
-
 static void streamFrameSamples(uint16_t counter) {
 #if STREAM_TX_SAMPLES
+  Serial.write('#');
+  Serial.print(F("frame,"));
+  Serial.println(counter);
+  Serial.println(F("#index,I,Q,mag"));
   for (uint8_t idx = 0; idx < CIR_SAMPLE_COUNT; idx++) {
-    Serial.print(counter);
-    Serial.print(',');
+    int16_t iVal = cirSamples[idx].i;
+    int16_t qVal = cirSamples[idx].q;
+    double magnitude = sqrt((double)iVal * (double)iVal +
+                            (double)qVal * (double)qVal);
     Serial.print(idx);
-    Serial.print(',');
-    Serial.print(cirSamples[idx].i);
-    Serial.print(',');
-    Serial.println(cirSamples[idx].q);
+    Serial.write(',');
+    Serial.print(iVal);
+    Serial.write(',');
+    Serial.print(qVal);
+    Serial.write(',');
+    Serial.println(magnitude, 6);
   }
 #else
   (void)counter;
@@ -107,8 +110,6 @@ void setup()
   DW3000.init(); // Initialize chip (write default values, calibration, etc.)
   DW3000.setupGPIO(); //Setup the DW3000s GPIO pins for use of LEDs
   Serial.println(F("#INFO Setup is finished."));
-
-  printCsvHeader();
 
   DW3000.configureAsTX(); // Configure basic settings for frame transmitting
 }

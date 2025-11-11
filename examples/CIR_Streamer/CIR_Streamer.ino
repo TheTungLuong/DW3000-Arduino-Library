@@ -55,6 +55,16 @@ static SPISettings dwSpiSettings(DW_SPI_FREQUENCY, MSBFIRST, SPI_MODE0);
 static uint8_t gHeaderBuffer[3];
 static uint8_t gAccBuffer[ACC_DUMMY_BYTES + CIR_CHUNK_SAMPLES * ACC_BYTES_PER_SAMPLE];
 
+static void print_status(const __FlashStringHelper *message) {
+  Serial.write('#');
+  Serial.println(message);
+}
+
+static void print_status(const char *message) {
+  Serial.write('#');
+  Serial.println(message);
+}
+
 static void dw_select() {
   SPI.beginTransaction(dwSpiSettings);
   digitalWrite(DW_CS, LOW);
@@ -246,6 +256,7 @@ static void stream_samples(uint16_t startSample, uint16_t sampleCount) {
 }
 
 static void stream_full_capture() {
+  print_status(F("capture-begin"));
   enable_acc_clocks(true);
 
   Serial.println(F("#index,I,Q,mag"));
@@ -257,6 +268,8 @@ static void stream_full_capture() {
 
   enable_acc_clocks(false);
   Serial.flush();
+  print_status(F("capture-end"));
+  print_status(F("ready-send-c-to-capture"));
 }
 
 void setup() {

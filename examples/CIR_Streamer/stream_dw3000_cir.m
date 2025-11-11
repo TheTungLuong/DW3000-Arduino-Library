@@ -46,6 +46,8 @@ pause(2.0);  % Allow the Arduino time to reset and begin streaming.
 
 maxHeaderReads = 50;
 header = "";
+headerInfo = struct('frameIdx', 0, 'indexIdx', 0, 'realIdx', 0, ...
+    'imagIdx', 0, 'magIdx', 0);
 while maxHeaderReads > 0
     rawLine = safeReadline(sp);
     if strlength(rawLine) == 0
@@ -54,16 +56,24 @@ while maxHeaderReads > 0
     end
 
     candidate = strtrim(rawLine);
-    if candidate == "#index,I,Q,mag"
-        header = candidate;
-        break;
+    if startsWith(candidate, "#")
+        parsed = parseHeader(candidate);
+        if parsed.realIdx ~= 0 && parsed.imagIdx ~= 0
+            header = candidate;
+            headerInfo = parsed;
+            break;
+        end
     end
 
     maxHeaderReads = maxHeaderReads - 1;
 end
 
 if header == ""
-    warning("Did not receive the expected header #index,I,Q,mag.");
+    warning("Did not receive a recognizable header. Assuming index,I,Q,mag order.");
+    headerInfo.indexIdx = 1;
+    headerInfo.realIdx = 2;
+    headerInfo.imagIdx = 3;
+    headerInfo.magIdx = 4;
 end
 
 samplesRead = 0;
@@ -71,6 +81,7 @@ indices = zeros(numSamples, 1);
 realVals = zeros(numSamples, 1);
 imagVals = zeros(numSamples, 1);
 magVals = zeros(numSamples, 1);
+frameVals = NaN(numSamples, 1);
 
 stallCounter = 0;
 
@@ -85,32 +96,61 @@ while samplesRead < numSamples
     end
 
     trimmed = strtrim(rawLine);
-    if trimmed == "#index,I,Q,mag"
-        % Skip stray headers (e.g., from manual retriggers).
+
+    if strlength(trimmed) == 0
+        continue;
+    end
+
+    if startsWith(trimmed, "#")
+        parsed = parseHeader(trimmed);
+        if parsed.realIdx ~= 0 && parsed.imagIdx ~= 0
+            headerInfo = parsed;
+        end
         continue;
     end
 
     tokens = split(trimmed, ',');
-    if numel(tokens) < 4
+    values = str2double(tokens);
+
+    requiredCount = max([headerInfo.frameIdx, headerInfo.indexIdx, ...
+        headerInfo.realIdx, headerInfo.imagIdx, headerInfo.magIdx, 1]);
+    if numel(values) < requiredCount
         warning("Skipping malformed row: %s", trimmed);
         continue;
     end
 
-    idx = str2double(tokens(1));
-    realVal = str2double(tokens(2));
-    imagVal = str2double(tokens(3));
-    magVal = str2double(tokens(4));
+    realVal = values(headerInfo.realIdx);
+    imagVal = values(headerInfo.imagIdx);
 
-    if any(isnan([idx, realVal, imagVal, magVal]))
+    if any(isnan([realVal, imagVal]))
         warning("Skipping row containing NaN values: %s", trimmed);
         continue;
     end
 
+    idxVal = samplesRead + 1;
+    if headerInfo.indexIdx ~= 0 && headerInfo.indexIdx <= numel(values)
+        idxVal = values(headerInfo.indexIdx);
+    end
+
+    magVal = NaN;
+    if headerInfo.magIdx ~= 0 && headerInfo.magIdx <= numel(values)
+        magVal = values(headerInfo.magIdx);
+    end
+    if isnan(magVal)
+        magVal = sqrt(realVal.^2 + imagVal.^2);
+    end
+
+    frameVal = NaN;
+    if headerInfo.frameIdx ~= 0 && headerInfo.frameIdx <= numel(values)
+        frameVal = values(headerInfo.frameIdx);
+    end
+
     samplesRead = samplesRead + 1;
-    indices(samplesRead) = idx;
+    indices(samplesRead) = idxVal;
     realVals(samplesRead) = realVal;
     imagVals(samplesRead) = imagVal;
     magVals(samplesRead) = magVal;
+    frameVals(samplesRead) = frameVal;
     stallCounter = 0;
 
 end
@@ -120,6 +160,7 @@ indices = indices(1:samplesRead);
 realVals = realVals(1:samplesRead);
 imagVals = imagVals(1:samplesRead);
 magVals = magVals(1:samplesRead);
+frameVals = frameVals(1:samplesRead);
 
 figureHandle = figure('Name', 'DW3000 CIR Capture', 'NumberTitle', 'off');
 set(figureHandle, 'Color', 'w');
@@ -151,6 +192,10 @@ fprintf('Captured %d samples from %s at %d baud.\n', samplesRead, serialPort, ba
 
 capture = struct('index', indices, 'real', realVals, ...
     'imag', imagVals, 'magnitude', magVals);
+
+if any(~isnan(frameVals))
+    capture.frame = frameVals;
+end
 
 clear sp;
 
@@ -208,6 +253,47 @@ clear sp;
             catch
                 % Ignore flush errors during cleanup
             end
+        end
+    end
+
+    function info = parseHeader(line)
+        info = struct('frameIdx', 0, 'indexIdx', 0, 'realIdx', 0, ...
+            'imagIdx', 0, 'magIdx', 0);
+
+        if strlength(line) == 0
+            return;
+        end
+
+        if startsWith(line, "#")
+            line = extractAfter(line, 1);
+        end
+
+        if strlength(line) == 0
+            return;
+        end
+
+        tokens = split(line, ',');
+        tokens = strip(lower(tokens));
+
+        for ii = 1:numel(tokens)
+            token = tokens(ii);
+            switch token
+                case "frame"
+                    info.frameIdx = ii;
+                case "index"
+                    info.indexIdx = ii;
+                case {"i", "real"}
+                    info.realIdx = ii;
+                case {"q", "imag"}
+                    info.imagIdx = ii;
+                case {"mag", "magnitude"}
+                    info.magIdx = ii;
+            end
+        end
+
+        if info.realIdx == 0 || info.imagIdx == 0
+            info = struct('frameIdx', 0, 'indexIdx', 0, 'realIdx', 0, ...
+                'imagIdx', 0, 'magIdx', 0);
         end
     end
 
