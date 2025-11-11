@@ -132,6 +132,7 @@ void loop()
   };
 
   DW3000.clearSystemStatus(); // Clear event status
+  Serial.println(F("#INFO Frame sent successfully."));
 
   streamFrameSamples(frameCounter);
   DW3000.pullLEDLow(2);

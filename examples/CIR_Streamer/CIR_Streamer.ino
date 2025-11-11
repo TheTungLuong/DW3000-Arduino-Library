@@ -268,6 +268,7 @@ static void stream_full_capture() {
 
   enable_acc_clocks(false);
   Serial.flush();
+  print_status(F("INFO CIR received successfully."));
   print_status(F("capture-end"));
   print_status(F("ready-send-c-to-capture"));
 }
