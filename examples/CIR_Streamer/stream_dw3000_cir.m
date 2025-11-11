@@ -82,6 +82,7 @@ realVals = zeros(numSamples, 1);
 imagVals = zeros(numSamples, 1);
 magVals = zeros(numSamples, 1);
 frameVals = NaN(numSamples, 1);
+captureAttributes = struct();
 
 stallCounter = 0;
 
@@ -102,6 +103,14 @@ while samplesRead < numSamples
     end
 
     if startsWith(trimmed, "#")
+        if startsWith(trimmed, "#INFO", 'IgnoreCase', true)
+            attrs = parseInfoAttributes(trimmed);
+            if ~isempty(fieldnames(attrs))
+                captureAttributes = mergeAttributes(captureAttributes, attrs);
+                displayAttributes(captureAttributes);
+            end
+            continue;
+        end
         parsed = parseHeader(trimmed);
         if parsed.realIdx ~= 0 && parsed.imagIdx ~= 0
             headerInfo = parsed;
@@ -197,6 +206,10 @@ if any(~isnan(frameVals))
     capture.frame = frameVals;
 end
 
+if ~isempty(fieldnames(captureAttributes))
+    capture.attributes = captureAttributes;
+end
+
 clear sp;
 
     function chosenPort = selectSerialPort(initialPort)
@@ -254,6 +267,109 @@ clear sp;
                 % Ignore flush errors during cleanup
             end
         end
+    end
+
+    function attrs = parseInfoAttributes(line)
+        attrs = struct();
+
+        if strlength(line) == 0
+            return;
+        end
+
+        if startsWith(line, "#")
+            line = extractAfter(line, 1);
+        end
+
+        if strlength(line) == 0
+            return;
+        end
+
+        tokens = split(line, ',');
+        tokens = strip(tokens);
+
+        if isempty(tokens)
+            return;
+        end
+
+        firstToken = tokens(1);
+        if strlength(firstToken) > 0
+            topicName = lower(strrep(strjoin(split(firstToken)), ' ', '_'));
+            attrs.topic = topicName;
+        end
+
+        for ii = 2:numel(tokens)
+            kv = split(tokens(ii), '=');
+            if numel(kv) ~= 2
+                continue;
+            end
+
+            key = strtrim(lower(kv(1)));
+            if strlength(key) == 0
+                continue;
+            end
+            key = matlab.lang.makeValidName(key);
+
+            valueStr = strtrim(kv(2));
+            valueNum = str2double(valueStr);
+            if ~isnan(valueNum)
+                attrs.(key) = valueNum;
+            else
+                attrs.(key) = valueStr;
+            end
+        end
+    end
+
+    function merged = mergeAttributes(existing, incoming)
+        merged = existing;
+        if isempty(fieldnames(incoming))
+            return;
+        end
+
+        keys = fieldnames(incoming);
+        for ii = 1:numel(keys)
+            merged.(keys{ii}) = incoming.(keys{ii});
+        end
+    end
+
+    function displayAttributes(attrs)
+        if isempty(fieldnames(attrs))
+            return;
+        end
+
+        topic = '';
+        if isfield(attrs, 'topic')
+            topic = attrs.topic;
+        end
+
+        otherFields = setdiff(fieldnames(attrs), {'topic'});
+
+        if strlength(topic) > 0
+            readableTopic = strrep(topic, '_', ' ');
+            fprintf('Capture %s', readableTopic);
+        else
+            fprintf('Capture attributes');
+        end
+
+        if isempty(otherFields)
+            fprintf('.\n');
+            return;
+        end
+
+        fprintf(': ');
+        for idx = 1:numel(otherFields)
+            key = otherFields{idx};
+            value = attrs.(key);
+            if isnumeric(value)
+                valueStr = num2str(value);
+            else
+                valueStr = char(value);
+            end
+            fprintf('%s=%s', key, valueStr);
+            if idx < numel(otherFields)
+                fprintf(', ');
+            end
+        end
+        fprintf('\n');
     end
 
     function info = parseHeader(line)

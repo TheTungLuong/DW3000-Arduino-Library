@@ -65,6 +65,23 @@ static void print_status(const char *message) {
   Serial.println(message);
 }
 
+static void print_capture_summary(uint16_t startSample, uint16_t sampleCount) {
+  Serial.write('#');
+  Serial.print(F("INFO capture"));
+  Serial.print(F(",status=success"));
+  Serial.print(F(",start="));
+  Serial.print(startSample);
+  Serial.print(F(",samples="));
+  Serial.print(sampleCount);
+#if READ_STS
+  Serial.print(F(",sts_start="));
+  Serial.print(STS_OFFSET);
+  Serial.print(F(",sts_samples="));
+  Serial.print(STS_SAMPLES);
+#endif
+  Serial.println();
+}
+
 static void dw_select() {
   SPI.beginTransaction(dwSpiSettings);
   digitalWrite(DW_CS, LOW);
@@ -268,7 +285,7 @@ static void stream_full_capture() {
 
   enable_acc_clocks(false);
   Serial.flush();
-  print_status(F("INFO CIR received successfully."));
+  print_capture_summary(0, NUM_SAMPLES);
   print_status(F("capture-end"));
   print_status(F("ready-send-c-to-capture"));
 }
