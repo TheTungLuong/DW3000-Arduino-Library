@@ -5,7 +5,7 @@
 /*
  * Wiring:
  *  - Connect DW3000 module SPI pins to Arduino UNO default SPI: SCK=13, MISO=12, MOSI=11.
- *  - Chip select, reset and IRQ can be reassigned by editing DW_CS, DW_RST and DW_IRQ.
+ *  - Chip select, reset and IRQ can be reassigned by editing DW_CSn, DW_RSTn and DW_IRQ.
  *  - For other Arduino boards adjust the SPI pins or DW_* pin defines accordingly.
  *
  * Usage:
@@ -14,9 +14,9 @@
  *  - Send 'c' over the Serial Monitor to trigger another capture without resetting the board.
  */
 
-#define DW_CS   10
-#define DW_RST   9
-#define DW_IRQ   2
+#define DW_CSn  10
+#define DW_RSTn  7
+#define DW_IRQ    8
 
 // DW3000 register file addresses
 #define DW_REG_PMSC             0x11    // Power management and system clock
@@ -84,11 +84,11 @@ static void print_capture_summary(uint16_t startSample, uint16_t sampleCount) {
 
 static void dw_select() {
   SPI.beginTransaction(dwSpiSettings);
-  digitalWrite(DW_CS, LOW);
+  digitalWrite(DW_CSn, LOW);
 }
 
 static void dw_deselect() {
-  digitalWrite(DW_CS, HIGH);
+  digitalWrite(DW_CSn, HIGH);
   SPI.endTransaction();
 }
 
@@ -201,10 +201,10 @@ static inline int32_t convert_acc_component(const uint8_t *raw) {
 }
 
 static void reset_dw3000() {
-  pinMode(DW_RST, OUTPUT);
-  digitalWrite(DW_RST, LOW);
+  pinMode(DW_RSTn, OUTPUT);
+  digitalWrite(DW_RSTn, LOW);
   delay(10);
-  pinMode(DW_RST, INPUT);
+  pinMode(DW_RSTn, INPUT);
   delay(10);
 }
 
@@ -296,9 +296,9 @@ void setup() {
   // Allow time for the USB CDC bridge to enumerate after reset.
   delay(200);
 #endif
-  pinMode(DW_CS, OUTPUT);
+  pinMode(DW_CSn, OUTPUT);
   pinMode(DW_IRQ, INPUT_PULLUP);
-  digitalWrite(DW_CS, HIGH);
+  digitalWrite(DW_CSn, HIGH);
 
   SPI.begin();
 
