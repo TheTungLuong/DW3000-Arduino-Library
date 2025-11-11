@@ -39,17 +39,13 @@
 #define STS_SAMPLES             512u
 #define READ_STS                0       // Set to 1 to also dump STS CIR taps
 
+// Streaming granularity to limit RAM consumption on small boards
+#define CIR_CHUNK_SAMPLES       32u
+
 // SPI configuration for DW3000
 #define DW_SPI_FREQUENCY        8000000u
 
 static SPISettings dwSpiSettings(DW_SPI_FREQUENCY, MSBFIRST, SPI_MODE0);
-
-static int32_t gPreambleI[NUM_SAMPLES];
-static int32_t gPreambleQ[NUM_SAMPLES];
-#if READ_STS
-static int32_t gStsI[STS_SAMPLES];
-static int32_t gStsQ[STS_SAMPLES];
-#endif
 
 static uint8_t gHeaderBuffer[3];
 
@@ -240,6 +236,38 @@ static void reset_dw3000() {
   delay(10);
 }
 
+static void stream_samples(uint16_t startSample, uint16_t sampleCount) {
+  int32_t iChunk[CIR_CHUNK_SAMPLES];
+  int32_t qChunk[CIR_CHUNK_SAMPLES];
+
+  uint16_t processed = 0;
+  while (processed < sampleCount) {
+    uint16_t chunk = sampleCount - processed;
+    if (chunk > CIR_CHUNK_SAMPLES) {
+      chunk = CIR_CHUNK_SAMPLES;
+    }
+
+    read_cir_block(startSample + processed, chunk, iChunk, qChunk);
+
+    for (uint16_t i = 0; i < chunk; i++) {
+      uint16_t index = startSample + processed + i;
+      float iVal = (float)iChunk[i];
+      float qVal = (float)qChunk[i];
+      float magnitude = sqrtf(iVal * iVal + qVal * qVal);
+
+      Serial.print(index);
+      Serial.print(',');
+      Serial.print((long)iChunk[i]);
+      Serial.print(',');
+      Serial.print((long)qChunk[i]);
+      Serial.print(',');
+      Serial.println(magnitude, 6);
+    }
+
+    processed += chunk;
+  }
+}
+
 void setup() {
   Serial.begin(921600);
   Serial.println(F("#index,I,Q,mag"));
@@ -253,37 +281,10 @@ void setup() {
   reset_dw3000();
   enable_acc_clocks(true);
 
-  read_cir_block(0, NUM_SAMPLES, gPreambleI, gPreambleQ);
+  stream_samples(0, NUM_SAMPLES);
 
 #if READ_STS
-  read_cir_block(STS_OFFSET, STS_SAMPLES, gStsI, gStsQ);
-#endif
-
-  for (uint16_t i = 0; i < NUM_SAMPLES; i++) {
-    double magnitude = sqrt((double)gPreambleI[i] * (double)gPreambleI[i] +
-                            (double)gPreambleQ[i] * (double)gPreambleQ[i]);
-    Serial.print(i);
-    Serial.print(',');
-    Serial.print(gPreambleI[i]);
-    Serial.print(',');
-    Serial.print(gPreambleQ[i]);
-    Serial.print(',');
-    Serial.println(magnitude, 6);
-  }
-
-#if READ_STS
-  for (uint16_t i = 0; i < STS_SAMPLES; i++) {
-    uint16_t index = STS_OFFSET + i;
-    double magnitude = sqrt((double)gStsI[i] * (double)gStsI[i] +
-                            (double)gStsQ[i] * (double)gStsQ[i]);
-    Serial.print(index);
-    Serial.print(',');
-    Serial.print(gStsI[i]);
-    Serial.print(',');
-    Serial.print(gStsQ[i]);
-    Serial.print(',');
-    Serial.println(magnitude, 6);
-  }
+  stream_samples(STS_OFFSET, STS_SAMPLES);
 #endif
 
   enable_acc_clocks(false);
