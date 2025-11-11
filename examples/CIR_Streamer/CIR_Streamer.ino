@@ -39,8 +39,8 @@
 #define STS_SAMPLES             512u
 #define READ_STS                0       // Set to 1 to also dump STS CIR taps
 
-// Streaming granularity to limit RAM consumption on small boards
-#define CIR_CHUNK_SAMPLES       32u
+// Streaming granularity to limit RAM consumption on small boards (samples per read)
+#define CIR_CHUNK_SAMPLES       16u
 
 // SPI configuration for DW3000
 #define DW_SPI_FREQUENCY        8000000u
@@ -48,6 +48,7 @@
 static SPISettings dwSpiSettings(DW_SPI_FREQUENCY, MSBFIRST, SPI_MODE0);
 
 static uint8_t gHeaderBuffer[3];
+static uint8_t gAccBuffer[ACC_DUMMY_BYTES + CIR_CHUNK_SAMPLES * ACC_BYTES_PER_SAMPLE];
 
 static void dw_select() {
   SPI.beginTransaction(dwSpiSettings);
@@ -167,67 +168,6 @@ static inline int32_t convert_acc_component(const uint8_t *raw) {
   return value;
 }
 
-static void parse_samples(const uint8_t *raw, uint16_t count, int32_t *iBuffer, int32_t *qBuffer) {
-  const uint8_t *p = raw + ACC_DUMMY_BYTES;
-  for (uint16_t sample = 0; sample < count; sample++) {
-    iBuffer[sample] = convert_acc_component(p);
-    p += 3;
-    qBuffer[sample] = convert_acc_component(p);
-    p += 3;
-  }
-}
-
-static void read_cir_direct(uint16_t startSample, uint16_t sampleCount, int32_t *iOut, int32_t *qOut) {
-  const uint16_t kMaxChunk = 16;
-  uint16_t processed = 0;
-  while (processed < sampleCount) {
-    uint16_t chunk = sampleCount - processed;
-    if (chunk > kMaxChunk) {
-      chunk = kMaxChunk;
-    }
-    uint8_t raw[ACC_DUMMY_BYTES + kMaxChunk * ACC_BYTES_PER_SAMPLE];
-    uint16_t subaddress = startSample + processed;
-    dw_read(DW_REG_ACC_MEM, subaddress, raw, ACC_DUMMY_BYTES + chunk * ACC_BYTES_PER_SAMPLE);
-    parse_samples(raw, chunk, iOut + processed, qOut + processed);
-    processed += chunk;
-  }
-}
-
-static void read_cir_indirect(uint16_t startSample, uint16_t sampleCount, int32_t *iOut, int32_t *qOut) {
-  const uint16_t kMaxChunk = 32;
-  uint16_t processed = 0;
-  while (processed < sampleCount) {
-    uint16_t chunk = sampleCount - processed;
-    if (chunk > kMaxChunk) {
-      chunk = kMaxChunk;
-    }
-    program_indirect_pointer(startSample + processed);
-    uint8_t raw[ACC_DUMMY_BYTES + kMaxChunk * ACC_BYTES_PER_SAMPLE];
-    dw_read(DW_REG_INDIRECT_PTR_A, DW_SUB_PTR_A_WINDOW, raw, ACC_DUMMY_BYTES + chunk * ACC_BYTES_PER_SAMPLE);
-    parse_samples(raw, chunk, iOut + processed, qOut + processed);
-    processed += chunk;
-  }
-}
-
-static void read_cir_block(uint16_t startSample, uint16_t sampleCount, int32_t *iOut, int32_t *qOut) {
-  if (sampleCount == 0) {
-    return;
-  }
-  uint16_t firstDirectCount = 0;
-  if (startSample < 127) {
-    uint16_t limit = 127 - startSample;
-    firstDirectCount = sampleCount;
-    if (firstDirectCount > limit) {
-      firstDirectCount = limit;
-    }
-    read_cir_direct(startSample, firstDirectCount, iOut, qOut);
-  }
-  if (firstDirectCount < sampleCount) {
-    uint16_t remaining = sampleCount - firstDirectCount;
-    read_cir_indirect(startSample + firstDirectCount, remaining, iOut + firstDirectCount, qOut + firstDirectCount);
-  }
-}
-
 static void reset_dw3000() {
   pinMode(DW_RST, OUTPUT);
   digitalWrite(DW_RST, LOW);
@@ -236,34 +176,67 @@ static void reset_dw3000() {
   delay(10);
 }
 
-static void stream_samples(uint16_t startSample, uint16_t sampleCount) {
-  int32_t iChunk[CIR_CHUNK_SAMPLES];
-  int32_t qChunk[CIR_CHUNK_SAMPLES];
+static void emit_chunk(uint16_t baseSample, uint16_t sampleCount) {
+  const uint8_t *p = gAccBuffer + ACC_DUMMY_BYTES;
+  for (uint16_t i = 0; i < sampleCount; i++) {
+    int32_t iVal = convert_acc_component(p);
+    p += 3;
+    int32_t qVal = convert_acc_component(p);
+    p += 3;
 
+    float fi = (float)iVal;
+    float fq = (float)qVal;
+    float magnitude = sqrtf(fi * fi + fq * fq);
+
+    uint16_t index = baseSample + i;
+    Serial.print(index);
+    Serial.print(',');
+    Serial.print((long)iVal);
+    Serial.print(',');
+    Serial.print((long)qVal);
+    Serial.print(',');
+    Serial.println(magnitude, 6);
+  }
+}
+
+static void stream_samples(uint16_t startSample, uint16_t sampleCount) {
   uint16_t processed = 0;
   while (processed < sampleCount) {
+    uint16_t currentSample = startSample + processed;
+    bool useDirect = (currentSample < 127u);
+
+    uint16_t chunkLimit = CIR_CHUNK_SAMPLES;
+    if (useDirect) {
+      uint16_t directRemaining = 127u - currentSample;
+      if (directRemaining < chunkLimit) {
+        chunkLimit = directRemaining;
+      }
+    }
+
     uint16_t chunk = sampleCount - processed;
-    if (chunk > CIR_CHUNK_SAMPLES) {
-      chunk = CIR_CHUNK_SAMPLES;
+    if (chunk > chunkLimit) {
+      chunk = chunkLimit;
+    }
+    if (chunk == 0) {
+      useDirect = false;
+      chunkLimit = CIR_CHUNK_SAMPLES;
+      chunk = sampleCount - processed;
+      if (chunk > chunkLimit) {
+        chunk = chunkLimit;
+      }
+      if (chunk == 0) {
+        break;
+      }
     }
 
-    read_cir_block(startSample + processed, chunk, iChunk, qChunk);
-
-    for (uint16_t i = 0; i < chunk; i++) {
-      uint16_t index = startSample + processed + i;
-      float iVal = (float)iChunk[i];
-      float qVal = (float)qChunk[i];
-      float magnitude = sqrtf(iVal * iVal + qVal * qVal);
-
-      Serial.print(index);
-      Serial.print(',');
-      Serial.print((long)iChunk[i]);
-      Serial.print(',');
-      Serial.print((long)qChunk[i]);
-      Serial.print(',');
-      Serial.println(magnitude, 6);
+    if (useDirect) {
+      dw_read(DW_REG_ACC_MEM, currentSample, gAccBuffer, ACC_DUMMY_BYTES + chunk * ACC_BYTES_PER_SAMPLE);
+    } else {
+      program_indirect_pointer(currentSample);
+      dw_read(DW_REG_INDIRECT_PTR_A, DW_SUB_PTR_A_WINDOW, gAccBuffer, ACC_DUMMY_BYTES + chunk * ACC_BYTES_PER_SAMPLE);
     }
 
+    emit_chunk(currentSample, chunk);
     processed += chunk;
   }
 }
