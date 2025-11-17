@@ -1,12 +1,18 @@
+#include <SPI.h>
 #include "DW3000.h"
 #include <math.h>
+
+// Chip select pin for the DW3000 shield when used with Arduino UNO class boards.
+#define DW3000_SS_PIN 10
 
 static int rx_status;
 static uint32_t frame_counter = 0;
 
-const uint16_t CIR_TOTAL_SAMPLES = 256;      // Number of complex CIR samples per frame to stream
-const uint16_t CIR_FIRST_SAMPLE_OFFSET = 0;  // Offset inside the accumulator (in samples)
-const uint8_t CIR_BYTES_PER_SAMPLE = 4;      // 16 bit I + 16 bit Q
+// CIR parameters
+const uint16_t CIR_TOTAL_SAMPLES = 256;       // Number of complex CIR samples per frame to stream
+const uint16_t CIR_FIRST_SAMPLE_INDEX = 0;    // Starting sample index inside ACC_MEM
+const uint8_t CIR_BYTES_PER_SAMPLE = 4;       // 16-bit I + 16-bit Q
+
 const uint16_t RX_WAIT_TIMEOUT_MS = 500;
 
 // Shared UWB configuration (must match the transmitter)
@@ -18,14 +24,18 @@ const uint8_t UWB_DATARATE = DATARATE_6_8MB;
 const uint8_t UWB_PHR_MODE = PHR_MODE_STANDARD;
 const uint8_t UWB_PHR_RATE = PHR_RATE_850KB;
 
-void streamCIR(uint32_t frameIndex);
-void configureUwbCommon();
-bool waitForRx();
+void configureRadioCommon();
+bool waitForFrame();
+void dumpCIR(uint32_t frameIndex);
 
 void setup() {
   Serial.begin(115200);
+
+  pinMode(DW3000_SS_PIN, OUTPUT);
+  digitalWrite(DW3000_SS_PIN, HIGH);
+
   DW3000.begin();
-  configureUwbCommon();
+
   DW3000.hardReset();
   delay(200);
 
@@ -35,7 +45,7 @@ void setup() {
   }
 
   while (!DW3000.checkForIDLE()) {
-    Serial.println(F("[ERROR] IDLE1 FAILED\r"));
+    Serial.println(F("[ERROR] IDLE1 FAILED"));
     delay(1000);
   }
 
@@ -43,15 +53,16 @@ void setup() {
   delay(200);
 
   if (!DW3000.checkForIDLE()) {
-    Serial.println(F("[ERROR] IDLE2 FAILED\r"));
+    Serial.println(F("[ERROR] IDLE2 FAILED"));
     while (1) {}
   }
 
   DW3000.init();
+  configureRadioCommon();
   DW3000.setupGPIO();
-  DW3000.clearSystemStatus();
+  DW3000.configureAsRX();
 
-  Serial.println(F("[INFO] CIR RX Stream setup complete."));
+  Serial.println(F("[INFO] DW3000 RX + CIR streamer ready."));
   Serial.print(F("[INFO] Streaming "));
   Serial.print(CIR_TOTAL_SAMPLES);
   Serial.println(F(" CIR samples per received frame."));
@@ -60,8 +71,8 @@ void setup() {
 void loop() {
   DW3000.standardRX();
 
-  if (!waitForRx()) {
-    Serial.println(F("RX: frame receive timeout"));
+  if (!waitForFrame()) {
+    Serial.println(F("RX: timeout, no frame"));
     DW3000.clearSystemStatus();
     return;
   }
@@ -72,7 +83,7 @@ void loop() {
     Serial.print(F("RX: frame received OK, frame_id = "));
     Serial.println(frame_counter);
 
-    streamCIR(frame_counter);
+    dumpCIR(frame_counter);
     frame_counter++;
 
     DW3000.clearSystemStatus();
@@ -84,7 +95,7 @@ void loop() {
   }
 }
 
-void configureUwbCommon() {
+void configureRadioCommon() {
   DW3000.setChannel(UWB_CHANNEL);
   DW3000.setPreambleLength(UWB_PREAMBLE);
   DW3000.setPreambleCode(UWB_PREAMBLE_CODE);
@@ -92,11 +103,13 @@ void configureUwbCommon() {
   DW3000.setDatarate(UWB_DATARATE);
   DW3000.setPHRMode(UWB_PHR_MODE);
   DW3000.setPHRRate(UWB_PHR_RATE);
+  DW3000.writeSysConfig(); // commit config array to SYS_CFG and channel control
 }
 
-bool waitForRx() {
+bool waitForFrame() {
   unsigned long startMs = millis();
   rx_status = 0;
+
   while ((millis() - startMs) < RX_WAIT_TIMEOUT_MS) {
     rx_status = DW3000.receivedFrameSucc();
     if (rx_status != 0) {
@@ -107,37 +120,42 @@ bool waitForRx() {
   return false;
 }
 
-void streamCIR(uint32_t frameIndex) {
-  // Read raw accumulator data (ACC_MEM @ 0x15) one complex sample at a time to
-  // avoid accidental reuse/overlap. Each sample is 32 bits: lower 16 bits = I,
-  // upper 16 bits = Q. Both are signed little-endian values.
-  uint8_t word[4];
+void dumpCIR(uint32_t frameIndex) {
+  // Read the accumulator (ACC_MEM @ 0x15) in one continuous burst. Using a single
+  // readBytes call ensures the sub-address advances so each complex sample is read
+  // exactly once and avoids the common pitfall of repeatedly reading the first
+  // location (which produces flat I/Q values).
+  const uint32_t firstByteOffset = (uint32_t)CIR_FIRST_SAMPLE_INDEX * CIR_BYTES_PER_SAMPLE;
+  const size_t totalBytes = (size_t)CIR_TOTAL_SAMPLES * CIR_BYTES_PER_SAMPLE;
 
-  Serial.print(F("CIR_BEGIN,"));
+  static uint8_t cirBytes[CIR_TOTAL_SAMPLES * CIR_BYTES_PER_SAMPLE];
+  DW3000.readBytes(ACC_MEM_REG, firstByteOffset, cirBytes, totalBytes);
+
+  Serial.print(F("CIR_FRAME_BEGIN,"));
   Serial.println(frameIndex);
 
-  for (uint16_t sampleIndex = 0; sampleIndex < CIR_TOTAL_SAMPLES; sampleIndex++) {
-    uint32_t byteOffset = ((uint32_t)CIR_FIRST_SAMPLE_OFFSET + sampleIndex) * CIR_BYTES_PER_SAMPLE;
-    DW3000.readBytes(ACC_MEM_REG, byteOffset, word, sizeof(word));
+  for (uint16_t n = 0; n < CIR_TOTAL_SAMPLES; n++) {
+    size_t base = (size_t)n * CIR_BYTES_PER_SAMPLE;
 
-    // Decode little-endian I/Q with explicit sign extension.
-    int16_t realPart = (int16_t)((uint16_t)word[0] | ((uint16_t)word[1] << 8));
-    int16_t imagPart = (int16_t)((uint16_t)word[2] | ((uint16_t)word[3] << 8));
-    float magnitude = sqrtf((float)realPart * (float)realPart + (float)imagPart * (float)imagPart);
+    // Decode little-endian signed 16-bit I/Q values.
+    int16_t I = (int16_t)((uint16_t)cirBytes[base + 0] | ((uint16_t)cirBytes[base + 1] << 8));
+    int16_t Q = (int16_t)((uint16_t)cirBytes[base + 2] | ((uint16_t)cirBytes[base + 3] << 8));
+    float mag = sqrtf((float)I * (float)I + (float)Q * (float)Q);
 
+    // MATLAB-friendly CSV output: CIR,<frameIndex>,<sampleIndex>,<I>,<Q>,<magnitude>
     Serial.print(F("CIR,"));
     Serial.print(frameIndex);
     Serial.print(',');
-    Serial.print(sampleIndex + CIR_FIRST_SAMPLE_OFFSET);
+    Serial.print((uint16_t)(CIR_FIRST_SAMPLE_INDEX + n));
     Serial.print(',');
-    Serial.print(realPart);
+    Serial.print(I);
     Serial.print(',');
-    Serial.print(imagPart);
+    Serial.print(Q);
     Serial.print(',');
-    Serial.println(magnitude, 6);
+    Serial.println(mag, 6);
   }
 
-  Serial.print(F("CIR_END,"));
+  Serial.print(F("CIR_FRAME_END,"));
   Serial.println(frameIndex);
   Serial.flush();
 }
