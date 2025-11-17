@@ -1,6 +1,16 @@
 #include "DW3000.h"
 
-#define TX_SENT_DELAY 500
+#define TX_SENT_DELAY 200
+#define TX_WAIT_TIMEOUT_MS 250
+
+// Shared UWB configuration (must match the receiver)
+const uint8_t UWB_CHANNEL = CHANNEL_5;
+const uint8_t UWB_PREAMBLE = PREAMBLE_128;
+const uint8_t UWB_PREAMBLE_CODE = 9;
+const uint8_t UWB_PAC = PAC8;
+const uint8_t UWB_DATARATE = DATARATE_6_8MB;
+const uint8_t UWB_PHR_MODE = PHR_MODE_STANDARD;
+const uint8_t UWB_PHR_RATE = PHR_RATE_850KB;
 
 struct CirSample {
   int16_t i;
@@ -16,8 +26,19 @@ const CirSample BASE_CIR_SAMPLES[CIR_SAMPLE_COUNT] = {
 
 CirSample cirSamples[CIR_SAMPLE_COUNT];
 uint8_t frameBuffer[3 + CIR_SAMPLE_COUNT * sizeof(CirSample)];
-static int tx_status; // Variable to store the current status of the transmitter operation
 uint16_t frameCounter = 0;
+
+void configureUwbCommon()
+{
+  // Ensure both TX and RX use identical radio parameters
+  DW3000.setChannel(UWB_CHANNEL);
+  DW3000.setPreambleLength(UWB_PREAMBLE);
+  DW3000.setPreambleCode(UWB_PREAMBLE_CODE);
+  DW3000.setPACSize(UWB_PAC);
+  DW3000.setDatarate(UWB_DATARATE);
+  DW3000.setPHRMode(UWB_PHR_MODE);
+  DW3000.setPHRRate(UWB_PHR_RATE);
+}
 
 void prepareCirSamples(uint16_t counter)
 {
@@ -44,10 +65,22 @@ size_t encodeCirFrame(uint16_t counter)
   return bufferIndex;
 }
 
+bool waitForTxDone()
+{
+  unsigned long startMs = millis();
+  while ((millis() - startMs) < TX_WAIT_TIMEOUT_MS) {
+    if (DW3000.sentFrameSucc()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void setup()
 {
   Serial.begin(115200); // Init Serial
   DW3000.begin(); // Init SPI
+  configureUwbCommon(); // Apply radio config before init so TX/RX match
   DW3000.hardReset(); // hard reset in case that the chip wasn't disconnected from power
   delay(200); // Wait for DW3000 chip to wake up
 
@@ -91,22 +124,22 @@ void loop()
   DW3000.setFrameLength(frameLength); // Set frame length in bytes (FCS is added by hardware)
 
   DW3000.standardTX(); // Send fast command for transmitting
-  delay(10); // Wait for frame to be sent
 
-  while (!(tx_status = DW3000.sentFrameSucc()))
-  {
-    Serial.println("[ERROR] Frame could not be sent succesfully!");
-  };
+  bool txOk = waitForTxDone();
+  uint32_t sysStatus = DW3000.read(GEN_CFG_AES_LOW_REG, 0x44);
+
+  if (txOk) {
+    Serial.print("TX: frame sent OK, frame_id = ");
+    Serial.println(frameCounter);
+  } else {
+    Serial.print("TX: frame send ERROR, code = 0x");
+    Serial.println(sysStatus, HEX);
+  }
 
   DW3000.clearSystemStatus(); // Clear event status
 
-  Serial.print("[INFO] Sent CIR frame ");
-  Serial.print(frameCounter);
-  Serial.print(" with ");
-  Serial.print(CIR_SAMPLE_COUNT);
-  Serial.println(" samples.");
   DW3000.pullLEDLow(2);
 
   frameCounter++;
-  delay(TX_SENT_DELAY);
+  delay(TX_SENT_DELAY); // Give receiver time to process
 }
