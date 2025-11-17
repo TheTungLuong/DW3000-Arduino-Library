@@ -1,15 +1,54 @@
 % live_cir_stream.m
 % Real-time CIR stream visualizer for DW3000 RX output.
-% Replace SERIAL_PORT with your Arduino's port (e.g., "COM4" on Windows or "/dev/ttyUSB0" on Linux).
+% -------------------------------------------------------------------------
+% Set your COM port and baud rate below. Example: "COM6" on Windows or
+% "/dev/ttyUSB0" on Linux. If connection fails, confirm the Arduino is
+% plugged in, the port matches Device Manager / lsusb output, and that the
+% port is not open elsewhere (e.g., Arduino IDE Serial Monitor).
+% -------------------------------------------------------------------------
 
 function live_cir_stream()
-    serialPort = "COMx";   % TODO: set to your port
+    % >>> CONFIGURE THESE FOR YOUR SETUP <<<
+    serialPort = "COM6";   % CHANGE THIS IF NEEDED
     baudRate   = 115200;    % Must match Arduino Serial.begin
 
-    s = serialport(serialPort, baudRate, "Timeout", 1);
+    % Show available ports to help pick the right one
+    availablePorts = serialportlist("available");
+    if isempty(availablePorts)
+        fprintf(2, "No available serial ports detected. Plug in the Arduino and try again.\n");
+    else
+        fprintf("Available ports:\n");
+        disp(availablePorts.');
+    end
+
+    % Validate chosen port exists before attempting to open
+    if ~any(strcmp(serialPort, availablePorts))
+        error("Configured port %s not found. Update 'serialPort' to one of the available ports.", serialPort);
+    end
+
+    % Close/clear any lingering serial object on the same port
+    if exist('s', 'var') && isa(s, 'serialport') && isvalid(s) && strcmpi(s.Port, serialPort)
+        closeSerial(s);
+        clear s;
+    end
+    legacyObj = instrfind("Port", serialPort); %#ok<CLIFIND>
+    if ~isempty(legacyObj)
+        fclose(legacyObj);
+        delete(legacyObj);
+    end
+
+    % Attempt to open the serial port safely
+    try
+        s = serialport(serialPort, baudRate, "Timeout", 1);
+    catch connErr
+        fprintf(2, "Failed to open %s @ %d baud: %s\n", serialPort, baudRate, connErr.message);
+        fprintf(2, "Check if the Arduino is plugged in, the correct COM port is used, and that the port is not already open in Arduino IDE or another program.\n");
+        return;
+    end
+
     configureTerminator(s, "LF");
     flush(s);
-    cleanupObj = onCleanup(@() cleanupSerial(s));
+    cleanupObj = onCleanup(@() closeSerial(s)); %#ok<NASGU>
 
     currentFrame = -1;
     sampleIdx = [];
@@ -92,9 +131,20 @@ function live_cir_stream()
     end
 end
 
-function cleanupSerial(s)
-    if ~isempty(s) && isvalid(s)
+function closeSerial(s)
+    if isempty(s) || ~isvalid(s)
+        return;
+    end
+    try
         flush(s);
+    catch
+    end
+    try
+        delete(s);
+    catch
+    end
+    try
         clear s;
+    catch
     end
 end
