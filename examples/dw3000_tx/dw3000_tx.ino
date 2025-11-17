@@ -19,11 +19,11 @@ const uint16_t TX_INTERVAL_MS = 150;     // Period between frames
 const uint16_t TX_WAIT_TIMEOUT_MS = 200; // Wait time for TX complete status
 const uint8_t TX_PAYLOAD_LEN = 8;        // Small frame (~8 bytes)
 
-uint64_t txPayloadWord = 0;              // Pack the 8-byte payload into a single word
+uint8_t txPayload[TX_PAYLOAD_LEN];
 uint32_t frameCounter = 0;
 
 void configureRadioCommon();
-uint64_t buildPayloadWord(uint32_t counter);
+void buildPayload(uint32_t counter);
 bool waitForTxDone();
 
 void setup() {
@@ -66,15 +66,14 @@ void setup() {
 }
 
 void loop() {
-  txPayloadWord = buildPayloadWord(frameCounter);
+  buildPayload(frameCounter);
 
   // Clear stale status bits before arming a new transmission.
   DW3000.clearSystemStatus();
-  DW3000.setMode(0); // standard frame type
+  DW3000.setMode(0); // force standard frame type before TX command
 
-  // Write the 8-byte payload via the helper used in the original examples.
   DW3000.pullLEDHigh(2);
-  DW3000.setTXFrame(txPayloadWord);
+  DW3000.writeTXBuffer(txPayload, TX_PAYLOAD_LEN);
   DW3000.setFrameLength(TX_PAYLOAD_LEN);
   DW3000.standardTX();
 
@@ -104,23 +103,18 @@ void configureRadioCommon() {
   DW3000.writeSysConfig(); // apply the updated settings to SYS_CFG/CHAN_CTRL
 }
 
-uint64_t buildPayloadWord(uint32_t counter) {
-  // Pack the 32-bit counter (little-endian) followed by a fixed pattern into a
-  // single 64-bit word. This aligns with the helper that writes a full word to
-  // the TX buffer in one go.
-  uint64_t word = 0;
-  word |= (uint64_t)(counter & 0xFF);
-  word |= (uint64_t)((counter >> 8) & 0xFF) << 8;
-  word |= (uint64_t)((counter >> 16) & 0xFF) << 16;
-  word |= (uint64_t)((counter >> 24) & 0xFF) << 24;
+void buildPayload(uint32_t counter) {
+  // Embed the 32-bit frame counter (little-endian) so the receiver can track IDs.
+  txPayload[0] = (uint8_t)(counter & 0xFF);
+  txPayload[1] = (uint8_t)((counter >> 8) & 0xFF);
+  txPayload[2] = (uint8_t)((counter >> 16) & 0xFF);
+  txPayload[3] = (uint8_t)((counter >> 24) & 0xFF);
 
   // Fill remaining bytes with a simple pattern for quick visual checks in a sniffer.
-  word |= (uint64_t)0xA5 << 32;
-  word |= (uint64_t)0x5A << 40;
-  word |= (uint64_t)0xC3 << 48;
-  word |= (uint64_t)0x3C << 56;
-
-  return word;
+  txPayload[4] = 0xA5;
+  txPayload[5] = 0x5A;
+  txPayload[6] = 0xC3;
+  txPayload[7] = 0x3C;
 }
 
 bool waitForTxDone() {
