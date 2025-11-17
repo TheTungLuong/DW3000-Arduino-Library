@@ -103,6 +103,7 @@ void configureRadioCommon() {
   DW3000.setDatarate(UWB_DATARATE);
   DW3000.setPHRMode(UWB_PHR_MODE);
   DW3000.setPHRRate(UWB_PHR_RATE);
+  DW3000.writeSysConfig(); // commit config array to SYS_CFG and channel control
 }
 
 bool waitForFrame() {

@@ -381,6 +381,17 @@ void DW3000Class::configureAsTX() {
 }
 
 /*
+ Configures the chip for standard receive operation. This applies the current
+ radio settings (channel, preamble, STS/PHR mode) to SYS_CFG and leaves the
+ frame mode in the default standard setting so the application can enter RX
+ with standardRX().
+*/
+void DW3000Class::configureAsRX() {
+    writeSysConfig();
+    setMode(0); // standard frame type
+}
+
+/*
  Sets the first 4 GPIO pins as output for external measurements and LED usage
 */
 void DW3000Class::setupGPIO() {

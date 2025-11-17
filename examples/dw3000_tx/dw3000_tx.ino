@@ -96,6 +96,7 @@ void configureRadioCommon() {
   DW3000.setDatarate(UWB_DATARATE);
   DW3000.setPHRMode(UWB_PHR_MODE);
   DW3000.setPHRRate(UWB_PHR_RATE);
+  DW3000.writeSysConfig(); // apply the updated settings to SYS_CFG/CHAN_CTRL
 }
 
 void buildPayload(uint32_t counter) {
