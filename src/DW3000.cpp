@@ -376,6 +376,8 @@ void DW3000Class::writeSysConfig() {
  Configures the chip for usage as a Transfer Device
 */
 void DW3000Class::configureAsTX() {
+    writeSysConfig();
+    setMode(0); // standard frame type
     write(RF_CONF_REG, 0x1C, 0x34); //write pg_delay
     write(GEN_CFG_AES_HIGH_REG, 0x0C, 0xFDFDFDFD);
 }

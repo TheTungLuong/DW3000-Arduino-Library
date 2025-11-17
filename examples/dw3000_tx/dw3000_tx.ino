@@ -68,6 +68,10 @@ void setup() {
 void loop() {
   buildPayload(frameCounter);
 
+  // Clear stale status bits before arming a new transmission.
+  DW3000.clearSystemStatus();
+  DW3000.setMode(0); // force standard frame type before TX command
+
   DW3000.pullLEDHigh(2);
   DW3000.writeTXBuffer(txPayload, TX_PAYLOAD_LEN);
   DW3000.setFrameLength(TX_PAYLOAD_LEN);
@@ -121,5 +125,10 @@ bool waitForTxDone() {
     }
     yield();
   }
+
+  // Provide additional diagnostics so timeouts are easier to debug on hardware.
+  uint32_t sysStat = DW3000.read(GEN_CFG_AES_LOW_REG, 0x44);
+  Serial.print(F("[DEBUG] SYS_STATUS on TX timeout: 0x"));
+  Serial.println(sysStat, HEX);
   return false;
 }
