@@ -5,7 +5,6 @@ static int rx_status;
 static uint32_t frame_counter = 0;
 
 const uint16_t CIR_TOTAL_SAMPLES = 256;      // Number of complex CIR samples per frame to stream
-const uint16_t CIR_CHUNK_SAMPLES = 32;       // How many samples to read per SPI burst
 const uint16_t CIR_FIRST_SAMPLE_OFFSET = 0;  // Offset inside the accumulator (in samples)
 const uint8_t CIR_BYTES_PER_SAMPLE = 4;      // 16 bit I + 16 bit Q
 const uint16_t RX_WAIT_TIMEOUT_MS = 500;
@@ -109,42 +108,36 @@ bool waitForRx() {
 }
 
 void streamCIR(uint32_t frameIndex) {
-  uint8_t raw[CIR_CHUNK_SAMPLES * CIR_BYTES_PER_SAMPLE];
+  // Read raw accumulator data (ACC_MEM @ 0x15) one complex sample at a time to
+  // avoid accidental reuse/overlap. Each sample is 32 bits: lower 16 bits = I,
+  // upper 16 bits = Q. Both are signed little-endian values.
+  uint8_t word[4];
 
   Serial.print(F("CIR_BEGIN,"));
   Serial.println(frameIndex);
 
-  for (uint16_t sampleBase = 0; sampleBase < CIR_TOTAL_SAMPLES; sampleBase += CIR_CHUNK_SAMPLES) {
-    uint16_t samplesThisChunk = CIR_CHUNK_SAMPLES;
-    if (sampleBase + samplesThisChunk > CIR_TOTAL_SAMPLES) {
-      samplesThisChunk = CIR_TOTAL_SAMPLES - sampleBase;
-    }
+  for (uint16_t sampleIndex = 0; sampleIndex < CIR_TOTAL_SAMPLES; sampleIndex++) {
+    uint32_t byteOffset = ((uint32_t)CIR_FIRST_SAMPLE_OFFSET + sampleIndex) * CIR_BYTES_PER_SAMPLE;
+    DW3000.readBytes(ACC_MEM_REG, byteOffset, word, sizeof(word));
 
-    size_t bytesToRead = (size_t)samplesThisChunk * CIR_BYTES_PER_SAMPLE;
-    uint16_t byteOffset = (CIR_FIRST_SAMPLE_OFFSET + sampleBase) * CIR_BYTES_PER_SAMPLE;
+    // Decode little-endian I/Q with explicit sign extension.
+    int16_t realPart = (int16_t)((uint16_t)word[0] | ((uint16_t)word[1] << 8));
+    int16_t imagPart = (int16_t)((uint16_t)word[2] | ((uint16_t)word[3] << 8));
+    float magnitude = sqrtf((float)realPart * (float)realPart + (float)imagPart * (float)imagPart);
 
-    DW3000.readBytes(ACC_MEM_REG, byteOffset, raw, bytesToRead);
-
-    for (uint16_t i = 0; i < samplesThisChunk; i++) {
-      uint16_t rawIndex = i * CIR_BYTES_PER_SAMPLE;
-      int16_t realPart = (int16_t)((raw[rawIndex + 1] << 8) | raw[rawIndex]);
-      int16_t imagPart = (int16_t)((raw[rawIndex + 3] << 8) | raw[rawIndex + 2]);
-      float magnitude = sqrt((float)realPart * (float)realPart + (float)imagPart * (float)imagPart);
-      uint16_t sampleIndex = CIR_FIRST_SAMPLE_OFFSET + sampleBase + i;
-
-      Serial.print(F("CIR,"));
-      Serial.print(frameIndex);
-      Serial.print(',');
-      Serial.print(sampleIndex);
-      Serial.print(',');
-      Serial.print(realPart);
-      Serial.print(',');
-      Serial.print(imagPart);
-      Serial.print(',');
-      Serial.println(magnitude, 6);
-    }
+    Serial.print(F("CIR,"));
+    Serial.print(frameIndex);
+    Serial.print(',');
+    Serial.print(sampleIndex + CIR_FIRST_SAMPLE_OFFSET);
+    Serial.print(',');
+    Serial.print(realPart);
+    Serial.print(',');
+    Serial.print(imagPart);
+    Serial.print(',');
+    Serial.println(magnitude, 6);
   }
 
   Serial.print(F("CIR_END,"));
   Serial.println(frameIndex);
+  Serial.flush();
 }
