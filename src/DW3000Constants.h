@@ -3,11 +3,23 @@
 #define _DW3000CONSTANTS_H_INCLUDED
 
 // SPI Setup
-#define RST_PIN 27
+// Allow board-specific pinouts while keeping existing defaults for other targets.
+#if !defined(RST_PIN)
+  #if defined(ARDUINO_ARCH_AVR)
+    // DWS3000 shield reset on Arduino UNO/AVR boards
+    #define RST_PIN 9
+  #else
+    // Default reset for other boards (e.g., Makerfabs DW3000 solution)
+    #define RST_PIN 27
+  #endif
+#endif
+
 #ifdef ESP32 //Define for the Makerfabs DW3000 solution
-	#define CHIP_SELECT_PIN 4
+        #define CHIP_SELECT_PIN 4
 #else //Define for any other chip, e.g. the DWM3000EVB shield with the Arduino Uno
-	#define CHIP_SELECT_PIN 10
+        #ifndef CHIP_SELECT_PIN
+          #define CHIP_SELECT_PIN 10
+        #endif
 #endif
 
 
