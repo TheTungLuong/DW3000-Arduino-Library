@@ -29,9 +29,10 @@ class DW3000Class {
 		static void begin();
 		static void init();
 
-		static void writeSysConfig();
-		static void configureAsTX();
-		static void setupGPIO();
+                static void writeSysConfig();
+                static void configureAsTX();
+                static void configureAsRX();
+                static void setupGPIO();
 
 		// Double-Sided Ranging
 		static void ds_sendFrame(int stage);
